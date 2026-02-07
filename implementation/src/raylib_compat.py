@@ -219,41 +219,31 @@ def measure_text(text: str, size: int) -> int:
 
 # ── Textures ─────────────────────────────────────────────────────────
 
-_next_texture_id = 1
-_texture_name_to_id: dict[str, int] = {}
+_texture_cache: dict[str, Texture2D] = {}
 
 
 def load_texture(path: str) -> Texture2D:
-    global _next_texture_id
     # Extract just the filename from the path
     import os
     name = os.path.basename(str(path))
 
-    # Check if already loaded
-    if name in _texture_name_to_id:
-        tid = _texture_name_to_id[name]
-        # Get dimensions from JS
-        if _js_get_texture_info is not None:
-            info = _js_get_texture_info(name)
-            if info is not None:
-                info_py = info.to_py() if hasattr(info, 'to_py') else dict(info)
-                return Texture2D(tid, int(info_py.get('width', 32)), int(info_py.get('height', 32)), name)
-        return Texture2D(tid, 32, 32, name)
+    # Check cache
+    if name in _texture_cache:
+        return _texture_cache[name]
 
-    tid = _next_texture_id
-    _next_texture_id += 1
-    _texture_name_to_id[name] = tid
-
-    # Get dimensions from JS pre-loaded images
-    w, h = 32, 32
+    # Get texture info (including the JS-assigned ID) from pre-loaded images
+    tid, w, h = 0, 32, 32
     if _js_get_texture_info is not None:
         info = _js_get_texture_info(name)
         if info is not None:
             info_py = info.to_py() if hasattr(info, 'to_py') else dict(info)
+            tid = int(info_py.get('id', 0))
             w = int(info_py.get('width', 32))
             h = int(info_py.get('height', 32))
 
-    return Texture2D(tid, w, h, name)
+    tex = Texture2D(tid, w, h, name)
+    _texture_cache[name] = tex
+    return tex
 
 
 def unload_texture(texture) -> None:
