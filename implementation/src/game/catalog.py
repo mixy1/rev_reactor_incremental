@@ -304,9 +304,9 @@ def _component_type_to_stats(comp_type: dict) -> Optional[ComponentTypeStats]:
     if name.startswith("Capacitor") or name.startswith("Plate"):
         reactor_heat, reactor_power = reactor_power, reactor_heat
     reflects = float(comp_type.get("ReflectsPulses", 0.0) or 0.0)
+    meta = comp_type.get("_meta", {})
     type_of_component = comp_type.get("type_of_component") or comp_type.get("TypeOfComponent") or ""
     if not type_of_component:
-        meta = comp_type.get("_meta", {})
         type_of_component = meta.get("type_of_component", "")
     if isinstance(type_of_component, str):
         type_of_component = type_of_component.strip()
@@ -356,6 +356,7 @@ def _component_type_to_stats(comp_type: dict) -> Optional[ComponentTypeStats]:
         cell_height=cell_height,
         stats_known=True,
         component_type_id=_compute_component_type_id(name),
+        tier=meta.get("tier", 0) if isinstance(meta, dict) else 0,
         required_upgrade=_get_required_upgrade(name),
     )
 

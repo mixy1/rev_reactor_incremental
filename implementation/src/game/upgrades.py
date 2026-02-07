@@ -245,32 +245,37 @@ class UpgradeManager:
     def prepare_multipliers(self, sim: "Simulation") -> None:  # noqa: F821
         """RE: unnamed_function_10422 (PrepareMultipliers) — tick step 1.
 
-        Computes global multipliers from Coolant/Plating counts + upgrades.
+        Computes global multipliers from component tier sums + upgrades.
+        Binary uses unnamed_function_10447 which sums ComponentType.Tier
+        (offset 0x10) for all components matching a TypeOfComponent (0x14).
         """
-        coolant_count = sim.count_components_of_type("Coolant")
-        plating_count = sim.count_components_of_type("Plating")
-        capacitor_count = sim.count_components_of_type("Capacitor")
+        # RE: unnamed_function_10447(param1, 0xd, 0) — sums Tier for TypeOfComponent=0xd
+        # Binary checks TypeOfComponent=13 but description says "Each capacitor".
+        # The Tier field weights higher-tier components more (tier 1=1, tier 5=5).
+        capacitor_tier_sum = sim.sum_component_tiers("Capacitor")
 
-        # Vent effectiveness: each coolant adds (bonus-1)*0.01
-        # RE: self_vent_mult = (bonus(Coolant=0xD,17) - 1) * coolant_count * 0.01 + 1
-        # Correction: the original uses Capacitor count for VentEffectiveness
+        # RE: unnamed_function_10447(param1, 0xc, 0) — sums Tier for TypeOfComponent=0xc
+        plating_tier_sum = sim.sum_component_tiers("Plating")
+
+        # Vent effectiveness: Active Venting upgrade (index 27)
+        # RE: self_vent_mult = (bonus(0xD,0x11) - 1) * tier_sum * 0.01 + 1
         vent_eff = self.get_upgrade_stat_bonus(13, StatCategory.VENT_EFFECTIVENESS)
-        sim.self_vent_mult = (vent_eff - 1.0) * capacitor_count * 0.01 + 1.0
+        sim.self_vent_mult = (vent_eff - 1.0) * capacitor_tier_sum * 0.01 + 1.0
 
-        # Heat exchange effectiveness: each coolant adds (bonus-1)*0.01
-        # RE: heat_exchange_mult = (bonus(Coolant=0xD,22) - 1) * coolant_count * 0.01 + 1
+        # Heat exchange effectiveness: Active Exchangers upgrade (index 30)
+        # RE: heat_exchange_mult = (bonus(0xD,0x16) - 1) * tier_sum * 0.01 + 1
         exch_eff = self.get_upgrade_stat_bonus(13, StatCategory.EXCHANGER_EFFECTIVENESS)
-        sim.heat_exchange_mult = (exch_eff - 1.0) * capacitor_count * 0.01 + 1.0
+        sim.heat_exchange_mult = (exch_eff - 1.0) * capacitor_tier_sum * 0.01 + 1.0
 
-        # Power cap: each plating adds (bonus-1)*0.01
-        # RE: power_cap_mult = (bonus(Plating=0xC,21) - 1) * plating_count * 0.01 + 1
+        # Power cap: each plating tier adds (bonus-1)*0.01
+        # RE: power_cap_mult = (bonus(0xC,0x15) - 1) * tier_sum * 0.01 + 1
         pwr_cap = self.get_upgrade_stat_bonus(12, StatCategory.VENT_CAPACITY)
-        sim.power_cap_mult = (pwr_cap - 1.0) * plating_count * 0.01 + 1.0
+        sim.power_cap_mult = (pwr_cap - 1.0) * plating_tier_sum * 0.01 + 1.0
 
-        # Heat cap: each plating adds (bonus-1)*0.01
-        # RE: heat_cap_mult = (bonus(Plating=0xC,23) - 1) * plating_count * 0.01 + 1
+        # Heat cap: each plating tier adds (bonus-1)*0.01
+        # RE: heat_cap_mult = (bonus(0xC,0x17) - 1) * tier_sum * 0.01 + 1
         heat_cap = self.get_upgrade_stat_bonus(12, StatCategory.EXCHANGER_CAPACITY)
-        sim.heat_cap_mult = (heat_cap - 1.0) * plating_count * 0.01 + 1.0
+        sim.heat_cap_mult = (heat_cap - 1.0) * plating_tier_sum * 0.01 + 1.0
 
         # Ticks per second: additive (base 1 + upgrade bonus)
         tps_bonus = self.get_upgrade_stat_bonus(1, StatCategory.TICKS_PER_SECOND)

@@ -879,6 +879,23 @@ class Simulation:
                 count += 1
         return count
 
+    def sum_component_tiers(self, type_prefix: str) -> int:
+        """RE: unnamed_function_10447 — sum Tier field for placed components of a type.
+
+        The binary sums ComponentType.Tier (offset 0x10) for all components
+        whose TypeOfComponent (offset 0x14) matches. A tier-1 component
+        contributes 1, tier-2 contributes 2, etc.
+        """
+        total = 0
+        for comp in self.components:
+            if comp.depleted:
+                continue
+            if comp.stats.type_of_component and comp.stats.type_of_component.startswith(type_prefix):
+                total += comp.stats.tier
+            elif comp.stats.name.startswith(type_prefix):
+                total += comp.stats.tier
+        return total
+
     def get_component_cost(self, comp: ComponentTypeStats) -> float:
         """Return effective cost of a component after applying discount upgrades."""
         return comp.cost * self.upgrade_manager.get_component_discount()

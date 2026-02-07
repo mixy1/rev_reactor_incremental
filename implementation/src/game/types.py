@@ -33,4 +33,5 @@ class ComponentTypeStats:
     shop_col: int = 0
     cant_lose_heat: bool = False  # Binary +0xCA flag: thermally isolated (heat cannot be removed by exchangers/inlets)
     component_type_id: int = 0  # Integer ID for upgrade bonus lookup (2-7=fuel tiers, 8=Vent, etc.)
+    tier: int = 0  # Component tier (1-6 for tiered components like Capacitor1-6, Vent1-5, etc.)
     required_upgrade: int = -1  # Upgrade index that must be purchased for this component to appear (-1 = always visible)
