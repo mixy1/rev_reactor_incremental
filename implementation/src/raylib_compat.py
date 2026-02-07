@@ -239,7 +239,11 @@ else:
         _prev_input_state = _input_state
         if _js_poll_input is not None:
             raw = _js_poll_input()
-            _input_state = raw.to_py() if hasattr(raw, 'to_py') else dict(raw)
+            if hasattr(raw, 'to_py'):
+                _input_state = raw.to_py()
+                raw.destroy()
+            else:
+                _input_state = dict(raw)
             _frame_time = _input_state.get('dt', 1.0 / 60.0)
         else:
             _input_state = {}
@@ -251,6 +255,8 @@ else:
             js_cmds = to_js(_cmds, dict_converter=None)
             js_strings = to_js(_strings)
             _js_render_batch(js_cmds, js_strings)
+            js_cmds.destroy()
+            js_strings.destroy()
 
     # ── Background ───────────────────────────────────────────────────
 
@@ -304,7 +310,11 @@ else:
         if _js_get_texture_info is not None:
             info = _js_get_texture_info(name)
             if info is not None:
-                info_py = info.to_py() if hasattr(info, 'to_py') else dict(info)
+                if hasattr(info, 'to_py'):
+                    info_py = info.to_py()
+                    info.destroy()
+                else:
+                    info_py = dict(info)
                 tid = int(info_py.get('id', 0))
                 w = int(info_py.get('width', 32))
                 h = int(info_py.get('height', 32))
