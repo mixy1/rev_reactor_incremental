@@ -1,6 +1,6 @@
 """Save/load and export/import system for game state.
 
-Auto-save: JSON to local file, auto-saves on exit, auto-loads on startup.
+Auto-save: JSON to local file (native) or localStorage (web).
 Export/Import: Base64-encoded text file for sharing saves.
 Import also supports the original Reactor Idle encrypted format
 (AES-256-CBC via .NET PasswordDeriveBytes).
@@ -10,11 +10,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from game.simulation import Simulation
+
+_WEB = sys.platform == "emscripten"
 
 # ── Original game encryption parameters (RE: RijndaelSimple / Persistence) ──
 _PASS_PHRASE = b"nucLERR8CTRzR4n"
@@ -111,7 +114,7 @@ def _decrypt_original(ciphertext: bytes) -> str | None:
         print(f"[save] AES decryption failed: {e}")
         return None
 
-    # Fallback: pure-Python AES-256-CBC (for Pyodide where pycryptodome is unavailable)
+    # Fallback: pure-Python AES-256-CBC (for Pyodide or when pycryptodome is missing)
     if decrypted is None:
         try:
             decrypted = _aes_cbc_decrypt(key, _INIT_VECTOR, ciphertext)
@@ -476,66 +479,12 @@ def _restore_from_dict(sim: Simulation, data: dict) -> bool:
         return False
 
 
-_LOCALSTORAGE_KEY = "rev_reactor_save"
-
-
-def save_game(sim: Simulation, path=None) -> None:
-    """Auto-save to localStorage."""
-    data = _build_save_dict(sim)
-    json_str = json.dumps(data, separators=(",", ":"))
-    try:
-        from js import window  # type: ignore
-        window.localStorage.setItem(_LOCALSTORAGE_KEY, json_str)
-    except Exception as e:
-        print(f"[save] Error saving to localStorage: {e}")
-
-
-def load_game(sim: Simulation, path=None) -> bool:
-    """Auto-load from localStorage. Returns False on missing/corrupt data."""
-    try:
-        from js import window  # type: ignore
-        text = window.localStorage.getItem(_LOCALSTORAGE_KEY)
-        if text is None:
-            return False
-        # Convert JsProxy string to Python string if needed
-        text = str(text)
-    except Exception as e:
-        print(f"[save] Error reading localStorage: {e}")
-        return False
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        print(f"[save] Error parsing save data: {e}")
-        return False
-    return _restore_from_dict(sim, data)
-
-
-def export_save(sim: Simulation, path=None) -> None:
-    """Export: build save dict -> JSON -> base64 -> trigger browser download."""
-    data = _build_save_dict(sim)
-    json_str = json.dumps(data, separators=(",", ":"))
-    encoded = base64.b64encode(json_str.encode("utf-8")).decode("ascii")
-    try:
-        from js import document, window, Blob, URL  # type: ignore
-        blob = Blob.new([encoded], {"type": "text/plain"})
-        url = URL.createObjectURL(blob)
-        a = document.createElement("a")
-        a.href = url
-        a.download = "rev_reactor_save.txt"
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-    except Exception as e:
-        print(f"[save] Error exporting save: {e}")
-
-
 def _try_import_data(encoded: str) -> dict | None:
     """Try to parse import data in multiple formats.
 
     1. Raw JSON dict (desktop auto-save format)
-    2. base64 → JSON dict (web export format)
-    3. base64 → AES-256-CBC ciphertext → pipe-delimited (original game)
+    2. base64 -> JSON dict (web export format)
+    3. base64 -> AES-256-CBC ciphertext -> pipe-delimited (original game)
     """
     # 1. Try raw JSON first (desktop save.json / direct paste)
     try:
@@ -545,7 +494,7 @@ def _try_import_data(encoded: str) -> dict | None:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # 2. Try base64 → JSON (web export format)
+    # 2. Try base64 -> JSON (web export format)
     try:
         raw = base64.b64decode(encoded)
     except Exception:
@@ -558,7 +507,7 @@ def _try_import_data(encoded: str) -> dict | None:
     except (json.JSONDecodeError, UnicodeDecodeError):
         pass
 
-    # 3. Try original game format: base64 → AES ciphertext → pipe-delimited
+    # 3. Try original game format: base64 -> AES ciphertext -> pipe-delimited
     if len(raw) % 16 == 0 and len(raw) >= 16:
         plaintext = _decrypt_original(raw)
         if plaintext and "|" in plaintext:
@@ -569,30 +518,12 @@ def _try_import_data(encoded: str) -> dict | None:
     return None
 
 
+# ── Pending import state (used by web file import flow) ──────────────
 _pending_import_sim: Simulation | None = None
 
 
-def import_save_from_file(sim: Simulation) -> bool:
-    """Trigger the browser file input element to import a save.
-
-    The actual import happens via _handle_file_import called from the
-    frame-based polling system when the file is read.
-    """
-    global _pending_import_sim
-    _pending_import_sim = sim
-    try:
-        from js import document  # type: ignore
-        file_input = document.getElementById("file-input")
-        if file_input is not None:
-            file_input.value = ""  # Reset so same file can be re-selected
-            file_input.click()
-    except Exception as e:
-        print(f"[save] File input error: {e}")
-    return False
-
-
 def _handle_file_import(encoded: str) -> bool:
-    """Called from JS when the file input has been read."""
+    """Called from main loop when file content is available (web frame polling)."""
     sim = _pending_import_sim
     if sim is None:
         return False
@@ -604,3 +535,152 @@ def _handle_file_import(encoded: str) -> bool:
         return False
 
     return _restore_from_dict(sim, data)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Platform-specific save/load/export/import
+# ══════════════════════════════════════════════════════════════════════
+
+if _WEB:
+    _LOCALSTORAGE_KEY = "rev_reactor_save"
+
+    def save_game(sim: Simulation, path=None) -> None:
+        """Auto-save to localStorage."""
+        data = _build_save_dict(sim)
+        json_str = json.dumps(data, separators=(",", ":"))
+        try:
+            from js import window  # type: ignore
+            window.localStorage.setItem(_LOCALSTORAGE_KEY, json_str)
+        except Exception as e:
+            print(f"[save] Error saving to localStorage: {e}")
+
+    def load_game(sim: Simulation, path=None) -> bool:
+        """Auto-load from localStorage. Returns False on missing/corrupt data."""
+        try:
+            from js import window  # type: ignore
+            text = window.localStorage.getItem(_LOCALSTORAGE_KEY)
+            if text is None:
+                return False
+            # Convert JsProxy string to Python string if needed
+            text = str(text)
+        except Exception as e:
+            print(f"[save] Error reading localStorage: {e}")
+            return False
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"[save] Error parsing save data: {e}")
+            return False
+        return _restore_from_dict(sim, data)
+
+    def export_save(sim: Simulation, path=None) -> None:
+        """Export: build save dict -> JSON -> base64 -> trigger browser download."""
+        data = _build_save_dict(sim)
+        json_str = json.dumps(data, separators=(",", ":"))
+        encoded = base64.b64encode(json_str.encode("utf-8")).decode("ascii")
+        try:
+            from js import document, window, Blob, URL  # type: ignore
+            blob = Blob.new([encoded], {"type": "text/plain"})
+            url = URL.createObjectURL(blob)
+            a = document.createElement("a")
+            a.href = url
+            a.download = "rev_reactor_save.txt"
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(url)
+        except Exception as e:
+            print(f"[save] Error exporting save: {e}")
+
+    def import_save_from_file(sim: Simulation) -> bool:
+        """Trigger the browser file input element to import a save.
+
+        The actual import happens via _handle_file_import called from the
+        frame-based polling system when the file is read.
+        """
+        global _pending_import_sim
+        _pending_import_sim = sim
+        try:
+            from js import document  # type: ignore
+            file_input = document.getElementById("file-input")
+            if file_input is not None:
+                file_input.value = ""  # Reset so same file can be re-selected
+                file_input.click()
+        except Exception as e:
+            print(f"[save] File input error: {e}")
+        return False
+
+else:
+    def save_game(sim: Simulation, path: Path) -> None:
+        """Auto-save: write JSON atomically (tmp + rename)."""
+        data = _build_save_dict(sim)
+        tmp_path = path.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            tmp_path.replace(path)
+        except OSError as e:
+            print(f"[save] Error saving game: {e}")
+
+    def load_game(sim: Simulation, path: Path) -> bool:
+        """Auto-load: read JSON, restore state. Returns False on missing/corrupt file."""
+        if not path.exists():
+            return False
+        try:
+            text = path.read_text(encoding="utf-8")
+            data = json.loads(text)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"[save] Error loading save file: {e}")
+            return False
+        return _restore_from_dict(sim, data)
+
+    def export_save(sim: Simulation, path: Path) -> None:
+        """Export: build save dict -> JSON -> base64 -> write .txt file."""
+        data = _build_save_dict(sim)
+        json_str = json.dumps(data, separators=(",", ":"))
+        encoded = base64.b64encode(json_str.encode("utf-8")).decode("ascii")
+        try:
+            path.write_text(encoded, encoding="utf-8")
+        except OSError as e:
+            print(f"[save] Error exporting save: {e}")
+
+    def import_save_from_file(sim: Simulation) -> bool:
+        """Open a file dialog, read the selected file, and import it.
+
+        Supports both our base64-JSON format and the original game's
+        encrypted base64 format.
+        """
+        path = _open_file_dialog()
+        if path is None:
+            return False
+
+        try:
+            encoded = path.read_text(encoding="utf-8-sig").strip()
+        except OSError as e:
+            print(f"[save] Error reading import file: {e}")
+            return False
+
+        data = _try_import_data(encoded)
+        if data is None:
+            print(f"[save] Could not parse import file (not a valid save)")
+            return False
+
+        return _restore_from_dict(sim, data)
+
+    def _open_file_dialog() -> Path | None:
+        """Open a native file dialog to select a .txt file. Returns Path or None."""
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            filepath = filedialog.askopenfilename(
+                title="Import Save File",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            )
+            root.destroy()
+            if filepath:
+                return Path(filepath)
+        except Exception as e:
+            print(f"[save] File dialog error: {e}")
+        return None

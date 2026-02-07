@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 import math
 import re
 from typing import Optional
+
+_WEB = sys.platform == "emscripten"
 
 from raylib_compat import (
     Color,
@@ -819,7 +822,10 @@ class Ui:
             draw_text("Export", ex_x + (ei_btn_w - ex_lw) // 2, ei_y + 7, font_sm, text_color)
 
             if hover_export and mouse_pressed:
-                export_save(sim)
+                if _WEB:
+                    export_save(sim)
+                else:
+                    export_save(sim, self.save_dir / "save_export.txt")
 
             # Import button
             im_x = ei_start_x + ei_btn_w + gap

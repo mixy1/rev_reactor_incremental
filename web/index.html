@@ -3,19 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=900">
-    <title>Rev Reactor</title>
+    <meta name="description" content="Reactor Incremental reimplementation — nuclear.mixy1">
+    <link rel="icon" type="image/gif" href="mixy1.gif">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <title>nuclear.mixy1</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <canvas id="game-canvas" width="900" height="630"></canvas>
-
-    <div id="loading">
-        <h1>Rev Reactor</h1>
-        <div id="loading-bar-container">
-            <div id="loading-bar"></div>
+    <header class="header">
+        <div class="header-content">
+            <a href="/" class="logo">
+                <img src="assets/sprites/Fuel5-4.png" alt="" class="logo-sprite">
+                <span>nuclear.</span><img src="mixy1.gif" alt="mixy1" class="logo-gif">
+            </a>
+            <nav class="nav-links">
+                <a href="https://mixy.one" target="_blank" rel="noopener">mixy.one</a>
+                <a href="https://github.com/nicm42" target="_blank" rel="noopener">GitHub</a>
+            </nav>
         </div>
-        <div id="loading-status">Initializing...</div>
-    </div>
+    </header>
+
+    <main>
+        <canvas id="game-canvas" width="900" height="630"></canvas>
+
+        <div id="loading">
+            <div class="loading-icon-row">
+                <img src="assets/sprites/Fuel1-1.png" alt="" class="loading-sprite">
+                <img src="assets/sprites/Fuel3-1.png" alt="" class="loading-sprite">
+                <img src="assets/sprites/Fuel5-1.png" alt="" class="loading-sprite">
+                <img src="assets/sprites/Fuel7-1.png" alt="" class="loading-sprite">
+                <img src="assets/sprites/Fuel9-1.png" alt="" class="loading-sprite">
+            </div>
+            <h1>Reactor Incremental</h1>
+            <div id="loading-bar-container">
+                <div id="loading-bar"></div>
+            </div>
+            <div id="loading-status">Initializing...</div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-left">
+                <a href="https://mixy.one" target="_blank" rel="noopener" title="Visit mixy.one">
+                    <img src="mixy1.gif" alt="mixy1" class="footer-mixy">
+                </a>
+                <span class="footer-text">reimplementation of my favourite game of all time</span>
+            </div>
+            <div class="footer-right">
+                <a href="https://www.kongregate.com/en/games/cael/reactor-incremental" target="_blank" rel="noopener">
+                    Reactor Incremental
+                </a>
+                <span class="footer-sep">by</span>
+                <a href="https://www.kongregate.com/en/games/cael/reactor-incremental" target="_blank" rel="noopener">
+                    cael
+                </a>
+            </div>
+        </div>
+    </footer>
 
     <!-- Hidden file input for save import -->
     <input type="file" id="file-input" accept=".txt,.json">

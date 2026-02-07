@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import math
+import sys
+
+_WEB = sys.platform == "emscripten"
+
+if not _WEB:
+    from pathlib import Path
 
 from raylib_compat import (
     Color,
@@ -40,10 +46,23 @@ from raylib_compat import (
     set_target_fps,
     get_pending_file_import,
 )
+
+if not _WEB:
+    from raylib_compat import (
+        WindowShouldClose,
+        close_window,
+        KEY_F4,
+        KEY_F5,
+        take_screenshot,
+        unload_texture,
+    )
+
 from game.simulation import Simulation
 from game.save import save_game, load_game, _handle_file_import
 
 from assets import sprite_path
+if not _WEB:
+    from assets import reference_path
 from game.layout import load_layout
 from game.grid import Grid
 from game.simulation import ReactorComponent, ExplosionEffect, demo_simulation
@@ -54,7 +73,7 @@ _sim_ref = None
 
 
 def _load_texture(name: str) -> Texture2D:
-    return load_texture(sprite_path(name))
+    return load_texture(str(sprite_path(name)))
 
 
 async def main() -> None:
@@ -67,7 +86,11 @@ async def main() -> None:
 
     sim = demo_simulation()
     _sim_ref = sim
-    save_path = None  # Web port uses localStorage, not file path
+
+    if _WEB:
+        save_path = None  # Web port uses localStorage, not file path
+    else:
+        save_path = Path(__file__).resolve().parent / "save.json"
 
     heat_tex = _load_texture("Heat.png")
     power_tex = _load_texture("Power.png")
@@ -119,8 +142,18 @@ async def main() -> None:
     icon_btn_pressed = _load_texture("IconClickedButton.png")
     icon_btn_locked = _load_texture("IconButtonLocked.png")
 
-    # No reference textures in web build
-    reference_textures = []
+    if _WEB:
+        reference_textures = []
+    else:
+        reference_names = [
+            "screenshot-main.png",
+            "screenshot-upgrades.png",
+            "screenshot-statistics.png",
+            "screenshot-prestige.png",
+            "screenshot-help.png",
+            "screenshot-options.png",
+        ]
+        reference_textures = [(load_texture(str(reference_path(name))), name) for name in reference_names]
 
     # Explosion animation: 12 frames (RE: Explosion MonoBehaviour)
     explosion_textures = [_load_texture(f"Explosion_{i}.png") for i in range(12)]
@@ -231,7 +264,10 @@ async def main() -> None:
         upgrade_sprites=upgrade_sprites,
     )
 
-    ui.save_dir = True  # Signals web mode for export/import buttons
+    if _WEB:
+        ui.save_dir = True  # Signals web mode for export/import buttons
+    else:
+        ui.save_dir = save_path.parent
     load_game(sim, save_path)
 
     show_reference = False
@@ -239,16 +275,23 @@ async def main() -> None:
     last_place_cell = None
     last_sell_cell = None
     prev_mx, prev_my = 0.0, 0.0
-    last_save_time = get_time()
-    AUTO_SAVE_INTERVAL = 30.0  # Auto-save every 30 seconds
 
-    while True:
+    if _WEB:
+        last_save_time = get_time()
+        AUTO_SAVE_INTERVAL = 30.0  # Auto-save every 30 seconds
+
+    try:
+        while True:
+            if not _WEB and WindowShouldClose():
+                break
+
             dt = get_frame_time()
 
             # Check for pending file import (queued by JS file input)
-            pending_import = get_pending_file_import()
-            if pending_import is not None:
-                _handle_file_import(str(pending_import))
+            if _WEB:
+                pending_import = get_pending_file_import()
+                if pending_import is not None:
+                    _handle_file_import(str(pending_import))
 
             # RE fn 10408 lines 387652-387665: ticks only run when
             # NOT manually paused AND no UI panel is open.  Controller+0x28
@@ -273,6 +316,13 @@ async def main() -> None:
                 reference_index = (reference_index + 1) % len(reference_textures)
             if is_key_pressed(KEY_F3) and reference_textures:
                 reference_index = (reference_index - 1) % len(reference_textures)
+
+            # F4 = take debug screenshot (saved to CWD by raylib)
+            if not _WEB and is_key_pressed(KEY_F4):
+                import time
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                fname = f"debug_{sim.view_mode}_{ts}.png"
+                take_screenshot(fname)
 
             # Space = toggle pause (RE: line 387964, writes PauseButton.IsToggled)
             if is_key_pressed(KEY_SPACE):
@@ -833,11 +883,75 @@ async def main() -> None:
             end_drawing()
             prev_mx, prev_my = mx, my
 
-            # Periodic auto-save (no reliable finally in browser)
-            now = get_time()
-            if now - last_save_time >= AUTO_SAVE_INTERVAL:
-                save_game(sim, save_path)
-                last_save_time = now
+            # Periodic auto-save (web: no reliable finally; native: also nice to have)
+            if _WEB:
+                now = get_time()
+                if now - last_save_time >= AUTO_SAVE_INTERVAL:
+                    save_game(sim, save_path)
+                    last_save_time = now
 
-            # Yield to browser event loop
+            # Yield to browser event loop (no-op cost on native via asyncio.run)
             await asyncio.sleep(0)
+    finally:
+        save_game(sim, save_path)
+        if not _WEB:
+            unload_texture(heat_tex)
+            unload_texture(power_tex)
+            unload_texture(grid_tex)
+            unload_texture(grid_full)
+            unload_texture(grid_backer)
+            unload_texture(grid_frame)
+            unload_texture(side_grid)
+            unload_texture(btn_big)
+            unload_texture(btn_big_hover)
+            unload_texture(btn_big_pressed)
+            unload_texture(btn_small)
+            unload_texture(btn_small_hover)
+            unload_texture(btn_small_pressed)
+            unload_texture(btn_med)
+            unload_texture(btn_med_hover)
+            unload_texture(btn_med_pressed)
+            unload_texture(btn_back)
+            unload_texture(btn_back_hover)
+            unload_texture(btn_back_pressed)
+            unload_texture(btn_play)
+            unload_texture(btn_play_hover)
+            unload_texture(btn_play_pressed)
+            unload_texture(btn_pause)
+            unload_texture(btn_pause_hover)
+            unload_texture(btn_pause_pressed)
+            unload_texture(btn_replace)
+            unload_texture(btn_replace_hover)
+            unload_texture(btn_replace_pressed)
+            unload_texture(btn_noreplace)
+            unload_texture(btn_noreplace_hover)
+            unload_texture(btn_noreplace_pressed)
+            unload_texture(top_banner)
+            unload_texture(store_block)
+            unload_texture(tab_power)
+            unload_texture(tab_power_hover)
+            unload_texture(tab_power_pressed)
+            unload_texture(tab_heat)
+            unload_texture(tab_heat_hover)
+            unload_texture(tab_heat_pressed)
+            unload_texture(tab_experimental)
+            unload_texture(tab_experimental_hover)
+            unload_texture(tab_experimental_pressed)
+            unload_texture(tab_arcane)
+            unload_texture(tab_arcane_hover)
+            unload_texture(tab_arcane_pressed)
+            unload_texture(icon_btn)
+            unload_texture(icon_btn_hover)
+            unload_texture(icon_btn_pressed)
+            unload_texture(icon_btn_locked)
+            for tex in explosion_textures:
+                unload_texture(tex)
+            for tex in component_sprites.values():
+                unload_texture(tex)
+            for tex, _ in reference_textures:
+                unload_texture(tex)
+            close_window()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
