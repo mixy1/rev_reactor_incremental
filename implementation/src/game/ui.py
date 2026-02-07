@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 import re
-from pathlib import Path
 from typing import Optional
 
 from raylib_compat import (
@@ -51,7 +50,7 @@ class Ui:
     store_tab_arcane_hover: Optional[Texture2D] = None
     store_tab_arcane_pressed: Optional[Texture2D] = None
     upgrade_sprites: Optional[dict] = None  # icon_path -> Texture2D
-    save_dir: Optional[Path] = None  # Directory for export/import files
+    save_dir: object = None  # Truthy to enable export/import buttons
 
     def draw(
         self,
@@ -809,8 +808,6 @@ class Ui:
             total_w = ei_btn_w * 2 + gap
             ei_start_x = content_x + (content_w - total_w) // 2
 
-            export_path = self.save_dir / "save_export.txt"
-
             # Export button
             ex_x = ei_start_x
             hover_export = (ex_x <= mouse_x <= ex_x + ei_btn_w and
@@ -822,7 +819,7 @@ class Ui:
             draw_text("Export", ex_x + (ei_btn_w - ex_lw) // 2, ei_y + 7, font_sm, text_color)
 
             if hover_export and mouse_pressed:
-                export_save(sim, export_path)
+                export_save(sim)
 
             # Import button
             im_x = ei_start_x + ei_btn_w + gap

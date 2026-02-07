@@ -5,13 +5,14 @@ import json
 from pathlib import Path
 
 
-def _repo_root() -> Path:
-    here = Path(__file__).resolve()
-    return here.parents[2]
-
-
 def default_layout_path() -> Path:
-    return _repo_root() / "implementation" / "layout.json"
+    # In Pyodide VFS, layout.json is written alongside source files
+    here = Path(__file__).resolve().parent
+    # Try layout.json in parent dir (src/) first, then current dir
+    p = here.parent / "layout.json"
+    if p.exists():
+        return p
+    return here / "layout.json"
 
 
 @dataclass

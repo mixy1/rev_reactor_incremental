@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=900">
+    <title>Rev Reactor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <canvas id="game-canvas" width="900" height="630"></canvas>
+
+    <div id="loading">
+        <h1>Rev Reactor</h1>
+        <div id="loading-bar-container">
+            <div id="loading-bar"></div>
+        </div>
+        <div id="loading-status">Initializing...</div>
+    </div>
+
+    <!-- Hidden file input for save import -->
+    <input type="file" id="file-input" accept=".txt,.json">
+
+    <script src="renderer.js"></script>
+    <script src="input.js"></script>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
+    <script src="loader.js"></script>
+</body>
+</html>

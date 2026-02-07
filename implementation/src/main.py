@@ -1,16 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import math
-from pathlib import Path
 
 from raylib_compat import (
     Color,
     Texture2D,
-    WindowShouldClose,
     begin_drawing,
     begin_scissor_mode,
     clear_background,
-    close_window,
     draw_rectangle,
     draw_text,
     draw_texture_pro,
@@ -32,8 +30,6 @@ from raylib_compat import (
     KEY_F1,
     KEY_F2,
     KEY_F3,
-    KEY_F4,
-    KEY_F5,
     KEY_SPACE,
     KEY_ESCAPE,
     KEY_X,
@@ -42,93 +38,91 @@ from raylib_compat import (
     Vector2,
     set_exit_key,
     set_target_fps,
-    take_screenshot,
-    unload_texture,
 )
 from game.simulation import Simulation
 from game.save import save_game, load_game
 
-from assets import sprite_path, reference_path
+from assets import sprite_path
 from game.layout import load_layout
 from game.grid import Grid
 from game.simulation import ReactorComponent, ExplosionEffect, demo_simulation
 from game.ui import Ui
 
+# Global reference for beforeunload auto-save from JS
+_sim_ref = None
 
-def _load_texture(path: Path) -> Texture2D:
-    return load_texture(str(path))
+
+def _load_texture(name: str) -> Texture2D:
+    return load_texture(sprite_path(name))
 
 
-def main() -> None:
+async def main() -> None:
     layout = load_layout()
     init_window(layout.window_width, layout.window_height, "Rev Reactor (Prototype)")
     set_exit_key(0)  # Disable raylib's default ESC-to-close
     set_target_fps(60)
 
-    sim = demo_simulation()
-    save_path = Path(__file__).resolve().parent / "save.json"
+    global _sim_ref
 
-    heat_tex = _load_texture(sprite_path("Heat.png"))
-    power_tex = _load_texture(sprite_path("Power.png"))
-    grid_tex = _load_texture(sprite_path("GridTile.png"))
-    grid_full = _load_texture(sprite_path("MainGrid.png"))
-    grid_backer = _load_texture(sprite_path("GridBacker.png"))
-    grid_frame = _load_texture(sprite_path("GridFrame.png"))
-    side_grid = _load_texture(sprite_path("SideGrid.png"))
-    btn_big = _load_texture(sprite_path("ButtonBIG.png"))
-    btn_big_hover = _load_texture(sprite_path("ButtonBIGHover.png"))
-    btn_big_pressed = _load_texture(sprite_path("ButtonBIGClicked.png"))
-    btn_small = _load_texture(sprite_path("ButtonSMALL.png"))
-    btn_small_hover = _load_texture(sprite_path("ButtonSMALLHover.png"))
-    btn_small_pressed = _load_texture(sprite_path("ButtonSMALLClicked.png"))
-    btn_med = _load_texture(sprite_path("ButtonMED.png"))
-    btn_med_hover = _load_texture(sprite_path("ButtonMEDHover.png"))
-    btn_med_pressed = _load_texture(sprite_path("ButtonMEDClicked.png"))
-    btn_back = _load_texture(sprite_path("ButtonBACK.png"))
-    btn_back_hover = _load_texture(sprite_path("ButtonBACKHover.png"))
-    btn_back_pressed = _load_texture(sprite_path("ButtonBACKClicked.png"))
-    btn_play = _load_texture(sprite_path("ButtonPLAY.png"))
-    btn_play_hover = _load_texture(sprite_path("ButtonPLAYHover.png"))
-    btn_play_pressed = _load_texture(sprite_path("ButtonPLAYClicked.png"))
-    btn_pause = _load_texture(sprite_path("ButtonPAUSE.png"))
-    btn_pause_hover = _load_texture(sprite_path("ButtonPAUSEHover.png"))
-    btn_pause_pressed = _load_texture(sprite_path("ButtonPAUSEClicked.png"))
-    btn_replace = _load_texture(sprite_path("ButtonREPLACE.png"))
-    btn_replace_hover = _load_texture(sprite_path("ButtonREPLACEHover.png"))
-    btn_replace_pressed = _load_texture(sprite_path("ButtonREPLACEClicked.png"))
-    btn_noreplace = _load_texture(sprite_path("ButtonNOREPLACE.png"))
-    btn_noreplace_hover = _load_texture(sprite_path("ButtonNOREPLACEHover.png"))
-    btn_noreplace_pressed = _load_texture(sprite_path("ButtonNOREPLACEClicked.png"))
-    top_banner = _load_texture(sprite_path("TopBanner.png"))
-    store_block = _load_texture(sprite_path("Block.png"))
-    tab_power = _load_texture(sprite_path("Power.png"))
-    tab_power_hover = _load_texture(sprite_path("PowerHover.png"))
-    tab_power_pressed = _load_texture(sprite_path("PowerClicked.png"))
-    tab_heat = _load_texture(sprite_path("Heat.png"))
-    tab_heat_hover = _load_texture(sprite_path("HeatHover.png"))
-    tab_heat_pressed = _load_texture(sprite_path("HeatClicked.png"))
-    tab_experimental = _load_texture(sprite_path("Experimental.png"))
-    tab_experimental_hover = _load_texture(sprite_path("ExperimentalHover.png"))
-    tab_experimental_pressed = _load_texture(sprite_path("ExperimentalClicked.png"))
-    tab_arcane = _load_texture(sprite_path("Arcane.png"))
-    tab_arcane_hover = _load_texture(sprite_path("ArcaneHover.png"))
-    tab_arcane_pressed = _load_texture(sprite_path("ArcaneClicked.png"))
-    icon_btn = _load_texture(sprite_path("IconButton.png"))
-    icon_btn_hover = _load_texture(sprite_path("IconHoverButton.png"))
-    icon_btn_pressed = _load_texture(sprite_path("IconClickedButton.png"))
-    icon_btn_locked = _load_texture(sprite_path("IconButtonLocked.png"))
-    reference_names = [
-        "screenshot-main.png",
-        "screenshot-upgrades.png",
-        "screenshot-statistics.png",
-        "screenshot-prestige.png",
-        "screenshot-help.png",
-        "screenshot-options.png",
-    ]
-    reference_textures = [(_load_texture(reference_path(name)), name) for name in reference_names]
+    sim = demo_simulation()
+    _sim_ref = sim
+    save_path = None  # Web port uses localStorage, not file path
+
+    heat_tex = _load_texture("Heat.png")
+    power_tex = _load_texture("Power.png")
+    grid_tex = _load_texture("GridTile.png")
+    grid_full = _load_texture("MainGrid.png")
+    grid_backer = _load_texture("GridBacker.png")
+    grid_frame = _load_texture("GridFrame.png")
+    side_grid = _load_texture("SideGrid.png")
+    btn_big = _load_texture("ButtonBIG.png")
+    btn_big_hover = _load_texture("ButtonBIGHover.png")
+    btn_big_pressed = _load_texture("ButtonBIGClicked.png")
+    btn_small = _load_texture("ButtonSMALL.png")
+    btn_small_hover = _load_texture("ButtonSMALLHover.png")
+    btn_small_pressed = _load_texture("ButtonSMALLClicked.png")
+    btn_med = _load_texture("ButtonMED.png")
+    btn_med_hover = _load_texture("ButtonMEDHover.png")
+    btn_med_pressed = _load_texture("ButtonMEDClicked.png")
+    btn_back = _load_texture("ButtonBACK.png")
+    btn_back_hover = _load_texture("ButtonBACKHover.png")
+    btn_back_pressed = _load_texture("ButtonBACKClicked.png")
+    btn_play = _load_texture("ButtonPLAY.png")
+    btn_play_hover = _load_texture("ButtonPLAYHover.png")
+    btn_play_pressed = _load_texture("ButtonPLAYClicked.png")
+    btn_pause = _load_texture("ButtonPAUSE.png")
+    btn_pause_hover = _load_texture("ButtonPAUSEHover.png")
+    btn_pause_pressed = _load_texture("ButtonPAUSEClicked.png")
+    btn_replace = _load_texture("ButtonREPLACE.png")
+    btn_replace_hover = _load_texture("ButtonREPLACEHover.png")
+    btn_replace_pressed = _load_texture("ButtonREPLACEClicked.png")
+    btn_noreplace = _load_texture("ButtonNOREPLACE.png")
+    btn_noreplace_hover = _load_texture("ButtonNOREPLACEHover.png")
+    btn_noreplace_pressed = _load_texture("ButtonNOREPLACEClicked.png")
+    top_banner = _load_texture("TopBanner.png")
+    store_block = _load_texture("Block.png")
+    tab_power = _load_texture("Power.png")
+    tab_power_hover = _load_texture("PowerHover.png")
+    tab_power_pressed = _load_texture("PowerClicked.png")
+    tab_heat = _load_texture("Heat.png")
+    tab_heat_hover = _load_texture("HeatHover.png")
+    tab_heat_pressed = _load_texture("HeatClicked.png")
+    tab_experimental = _load_texture("Experimental.png")
+    tab_experimental_hover = _load_texture("ExperimentalHover.png")
+    tab_experimental_pressed = _load_texture("ExperimentalClicked.png")
+    tab_arcane = _load_texture("Arcane.png")
+    tab_arcane_hover = _load_texture("ArcaneHover.png")
+    tab_arcane_pressed = _load_texture("ArcaneClicked.png")
+    icon_btn = _load_texture("IconButton.png")
+    icon_btn_hover = _load_texture("IconHoverButton.png")
+    icon_btn_pressed = _load_texture("IconClickedButton.png")
+    icon_btn_locked = _load_texture("IconButtonLocked.png")
+
+    # No reference textures in web build
+    reference_textures = []
 
     # Explosion animation: 12 frames (RE: Explosion MonoBehaviour)
-    explosion_textures = [_load_texture(sprite_path(f"Explosion_{i}.png")) for i in range(12)]
+    explosion_textures = [_load_texture(f"Explosion_{i}.png") for i in range(12)]
 
     if sim.grid is None or sim.grid.base_width != layout.grid_width or sim.grid.base_height != layout.grid_height:
         sim.grid = Grid(
@@ -151,8 +145,8 @@ def main() -> None:
         if comp.sprite_name in component_sprites:
             continue
         try:
-            component_sprites[comp.sprite_name] = _load_texture(sprite_path(comp.sprite_name))
-        except FileNotFoundError:
+            component_sprites[comp.sprite_name] = _load_texture(comp.sprite_name)
+        except Exception:
             continue
 
     # Load upgrade icon sprites: map upgrade icon/category paths to component sprites
@@ -205,8 +199,8 @@ def main() -> None:
         if icon_path in upgrade_sprites:
             continue
         try:
-            upgrade_sprites[icon_path] = _load_texture(sprite_path(sprite_name))
-        except FileNotFoundError:
+            upgrade_sprites[icon_path] = _load_texture(sprite_name)
+        except Exception:
             pass
 
     ui = Ui(
@@ -236,7 +230,7 @@ def main() -> None:
         upgrade_sprites=upgrade_sprites,
     )
 
-    ui.save_dir = save_path.parent
+    ui.save_dir = True  # Signals web mode for export/import buttons
     load_game(sim, save_path)
 
     show_reference = False
@@ -244,9 +238,10 @@ def main() -> None:
     last_place_cell = None
     last_sell_cell = None
     prev_mx, prev_my = 0.0, 0.0
+    last_save_time = get_time()
+    AUTO_SAVE_INTERVAL = 30.0  # Auto-save every 30 seconds
 
-    try:
-        while not WindowShouldClose():
+    while True:
             dt = get_frame_time()
 
             # RE fn 10408 lines 387652-387665: ticks only run when
@@ -266,19 +261,12 @@ def main() -> None:
             sim.update_explosions(dt)
 
             # ── Keyboard events ──────────────────────────────────────
-            if is_key_pressed(KEY_F1):
+            if is_key_pressed(KEY_F1) and reference_textures:
                 show_reference = not show_reference
-            if is_key_pressed(KEY_F2):
+            if is_key_pressed(KEY_F2) and reference_textures:
                 reference_index = (reference_index + 1) % len(reference_textures)
-            if is_key_pressed(KEY_F3):
+            if is_key_pressed(KEY_F3) and reference_textures:
                 reference_index = (reference_index - 1) % len(reference_textures)
-
-            # F4 = take debug screenshot (saved to CWD by raylib)
-            if is_key_pressed(KEY_F4):
-                import time
-                ts = time.strftime("%Y%m%d_%H%M%S")
-                fname = f"debug_{sim.view_mode}_{ts}.png"
-                take_screenshot(fname)
 
             # Space = toggle pause (RE: line 387964, writes PauseButton.IsToggled)
             if is_key_pressed(KEY_SPACE):
@@ -838,65 +826,12 @@ def main() -> None:
 
             end_drawing()
             prev_mx, prev_my = mx, my
-    finally:
-        save_game(sim, save_path)
-        unload_texture(heat_tex)
-        unload_texture(power_tex)
-        unload_texture(grid_tex)
-        unload_texture(grid_full)
-        unload_texture(grid_backer)
-        unload_texture(grid_frame)
-        unload_texture(side_grid)
-        unload_texture(btn_big)
-        unload_texture(btn_big_hover)
-        unload_texture(btn_big_pressed)
-        unload_texture(btn_small)
-        unload_texture(btn_small_hover)
-        unload_texture(btn_small_pressed)
-        unload_texture(btn_med)
-        unload_texture(btn_med_hover)
-        unload_texture(btn_med_pressed)
-        unload_texture(btn_back)
-        unload_texture(btn_back_hover)
-        unload_texture(btn_back_pressed)
-        unload_texture(btn_play)
-        unload_texture(btn_play_hover)
-        unload_texture(btn_play_pressed)
-        unload_texture(btn_pause)
-        unload_texture(btn_pause_hover)
-        unload_texture(btn_pause_pressed)
-        unload_texture(btn_replace)
-        unload_texture(btn_replace_hover)
-        unload_texture(btn_replace_pressed)
-        unload_texture(btn_noreplace)
-        unload_texture(btn_noreplace_hover)
-        unload_texture(btn_noreplace_pressed)
-        unload_texture(top_banner)
-        unload_texture(store_block)
-        unload_texture(tab_power)
-        unload_texture(tab_power_hover)
-        unload_texture(tab_power_pressed)
-        unload_texture(tab_heat)
-        unload_texture(tab_heat_hover)
-        unload_texture(tab_heat_pressed)
-        unload_texture(tab_experimental)
-        unload_texture(tab_experimental_hover)
-        unload_texture(tab_experimental_pressed)
-        unload_texture(tab_arcane)
-        unload_texture(tab_arcane_hover)
-        unload_texture(tab_arcane_pressed)
-        unload_texture(icon_btn)
-        unload_texture(icon_btn_hover)
-        unload_texture(icon_btn_pressed)
-        unload_texture(icon_btn_locked)
-        for tex in explosion_textures:
-            unload_texture(tex)
-        for tex in component_sprites.values():
-            unload_texture(tex)
-        for tex, _ in reference_textures:
-            unload_texture(tex)
-        close_window()
 
+            # Periodic auto-save (no reliable finally in browser)
+            now = get_time()
+            if now - last_save_time >= AUTO_SAVE_INTERVAL:
+                save_game(sim, save_path)
+                last_save_time = now
 
-if __name__ == "__main__":
-    main()
+            # Yield to browser event loop
+            await asyncio.sleep(0)

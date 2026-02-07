@@ -1,0 +1,68 @@
+#!/bin/bash
+# build_web.sh — Generate the web distribution for Rev Reactor
+#
+# Creates:
+#   web/assets/sprites/  — symlink or copy of sprite PNGs
+#   web/manifest.json    — list of all PNG sprite filenames
+#   Copies component_types.json to VFS path for catalog loading
+#
+# Usage: ./build_web.sh [--serve]
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+SPRITES_SRC="../rev_reactor/decompilation/recovered/recovered_assets/sprites"
+SPRITES_DST="web/assets/sprites"
+ANALYSIS_SRC="../rev_reactor/decompilation/recovered/recovered_analysis"
+
+echo "=== Rev Reactor Web Build ==="
+
+# 1. Set up sprite assets
+if [ ! -d "$SPRITES_SRC" ]; then
+    echo "Error: Sprites directory not found at $SPRITES_SRC"
+    echo "Expected: /home/mixy/projects/rev_reactor/decompilation/recovered/recovered_assets/sprites"
+    exit 1
+fi
+
+mkdir -p "web/assets"
+if [ -L "$SPRITES_DST" ]; then
+    rm "$SPRITES_DST"
+fi
+if [ -d "$SPRITES_DST" ]; then
+    echo "Sprites directory already exists, skipping symlink"
+else
+    ln -s "$(realpath "$SPRITES_SRC")" "$SPRITES_DST"
+    echo "Linked sprites: $SPRITES_DST -> $SPRITES_SRC"
+fi
+
+# 2. Generate manifest.json (list of all PNG filenames)
+echo "Generating manifest.json..."
+(cd "$SPRITES_DST" && ls *.png 2>/dev/null) | python3 -c "
+import sys, json
+names = [line.strip() for line in sys.stdin if line.strip()]
+print(json.dumps(sorted(names), indent=2))
+" > web/manifest.json
+SPRITE_COUNT=$(python3 -c "import json; print(len(json.load(open('web/manifest.json'))))")
+echo "  $SPRITE_COUNT sprites in manifest.json"
+
+# 3. Copy component_types.json to game/ directory for catalog loading
+if [ -f "$ANALYSIS_SRC/component_types.json" ]; then
+    cp "$ANALYSIS_SRC/component_types.json" "implementation/src/game/component_types.json"
+    echo "Copied component_types.json"
+else
+    echo "Warning: component_types.json not found, catalog may be incomplete"
+fi
+
+# 4. Optionally start local HTTP server
+if [ "${1:-}" = "--serve" ]; then
+    echo ""
+    echo "Starting HTTP server at http://localhost:8080"
+    echo "Open http://localhost:8080/web/ in your browser"
+    echo "Press Ctrl+C to stop"
+    python3 -m http.server 8080
+fi
+
+echo ""
+echo "Build complete. To run:"
+echo "  cd $(pwd) && python3 -m http.server 8080"
+echo "  Open http://localhost:8080/web/"

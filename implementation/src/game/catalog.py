@@ -710,7 +710,12 @@ def _component_types_path() -> Path:
 
 
 def _load_component_types() -> List[ComponentTypeStats]:
-    path = _component_types_path()
+    # Try local directory first (Pyodide VFS), then repo path
+    local_path = Path(__file__).resolve().parent / "component_types.json"
+    if local_path.exists():
+        path = local_path
+    else:
+        path = _component_types_path()
     if not path.exists():
         return []
     try:
