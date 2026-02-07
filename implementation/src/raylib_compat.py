@@ -148,7 +148,9 @@ else:
     OP_END_SCISSOR = 7
 
     # ── Command buffer (module-level, reused across frames) ───────────
-    _cmds: list[float] = []
+    # Use array.array('d') directly so to_js can use the buffer protocol
+    # without an intermediate copy.  extend() with tuples is efficient.
+    _cmds: array.array = array.array('d')
     _strings: list[str] = []
 
     # ── Input state (polled once per frame from JS) ──────────────────
@@ -239,9 +241,12 @@ else:
 
     # ── Drawing frame ────────────────────────────────────────────────
 
+    # Reusable mouse position — avoids allocating a new object every frame
+    _mouse_pos = _Pos(0, 0)
+
     def begin_drawing() -> None:
         global _prev_input_state, _input_state, _frame_time
-        _cmds.clear()
+        del _cmds[:]  # Clear in-place; array keeps its allocated buffer
         _strings.clear()
         _prev_input_state = _input_state
         if _js_poll_input is not None:
@@ -259,8 +264,9 @@ else:
 
     def end_drawing() -> None:
         if _js_render_batch is not None:
-            buf = array.array('d', _cmds)
-            js_cmds = _to_js(buf, dict_converter=None)
+            # Pass array.array directly — to_js uses buffer protocol
+            # (no intermediate list→array copy)
+            js_cmds = _to_js(_cmds)
             js_strings = _to_js(_strings)
             _js_render_batch(js_cmds, js_strings)
             if hasattr(js_cmds, 'destroy'):
@@ -352,7 +358,9 @@ else:
     # ── Input ────────────────────────────────────────────────────────
 
     def get_mouse_position():
-        return _Pos(_input_state.get('mouseX', 0), _input_state.get('mouseY', 0))
+        _mouse_pos.x = _input_state.get('mouseX', 0)
+        _mouse_pos.y = _input_state.get('mouseY', 0)
+        return _mouse_pos
 
     def is_mouse_button_pressed(button: int) -> bool:
         return button in _input_state.get('mousePressed', [])
