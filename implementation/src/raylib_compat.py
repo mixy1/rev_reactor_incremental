@@ -241,7 +241,8 @@ else:
             raw = _js_poll_input()
             if hasattr(raw, 'to_py'):
                 _input_state = raw.to_py()
-                raw.destroy()
+                if hasattr(raw, 'destroy'):
+                    raw.destroy()
             else:
                 _input_state = dict(raw)
             _frame_time = _input_state.get('dt', 1.0 / 60.0)
@@ -255,8 +256,10 @@ else:
             js_cmds = to_js(_cmds, dict_converter=None)
             js_strings = to_js(_strings)
             _js_render_batch(js_cmds, js_strings)
-            js_cmds.destroy()
-            js_strings.destroy()
+            if hasattr(js_cmds, 'destroy'):
+                js_cmds.destroy()
+            if hasattr(js_strings, 'destroy'):
+                js_strings.destroy()
 
     # ── Background ───────────────────────────────────────────────────
 
@@ -312,7 +315,8 @@ else:
             if info is not None:
                 if hasattr(info, 'to_py'):
                     info_py = info.to_py()
-                    info.destroy()
+                    if hasattr(info, 'destroy'):
+                        info.destroy()
                 else:
                     info_py = dict(info)
                 tid = int(info_py.get('id', 0))
