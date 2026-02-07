@@ -350,4 +350,8 @@ def take_screenshot(path: str) -> None:
 
 def get_pending_file_import():
     """Return file content queued by the JS file input, or None."""
-    return _input_state.get('fileImport', None)
+    if 'fileImport' not in _input_state:
+        return None
+    val = _input_state['fileImport']
+    # Ensure we return a Python string, not a JsProxy
+    return str(val) if val is not None else None

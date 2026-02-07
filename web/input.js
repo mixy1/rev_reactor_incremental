@@ -109,15 +109,19 @@ globalThis.Input = (() => {
             keysPressed: Array.from(keysPressed),
             keysDown: Array.from(keysDown),
             dt,
-            fileImport: pendingFileImport,
         };
+
+        // Include file import content only when present (avoids null/None proxy issues)
+        if (pendingFileImport !== null) {
+            state.fileImport = pendingFileImport;
+            pendingFileImport = null;
+        }
 
         // Clear per-frame state
         keysPressed.clear();
         mousePressed.clear();
         mouseReleased.clear();
         wheelDelta = 0;
-        pendingFileImport = null;
 
         return state;
     }

@@ -418,20 +418,21 @@ _pending_import_sim: Simulation | None = None
 
 
 def import_save_from_file(sim: Simulation) -> bool:
-    """Request browser file dialog for save import.
+    """Trigger the browser file input element to import a save.
 
-    Sets a JS-side flag so the next user click opens the file dialog
-    (browsers require file input clicks from a user gesture context).
     The actual import happens via _handle_file_import called from the
     frame-based polling system when the file is read.
     """
     global _pending_import_sim
     _pending_import_sim = sim
     try:
-        from js import Input  # type: ignore
-        Input.requestFileDialog()
+        from js import document  # type: ignore
+        file_input = document.getElementById("file-input")
+        if file_input is not None:
+            file_input.value = ""  # Reset so same file can be re-selected
+            file_input.click()
     except Exception as e:
-        print(f"[save] File dialog request error: {e}")
+        print(f"[save] File input error: {e}")
     return False
 
 
