@@ -21,6 +21,7 @@ globalThis.Input = (() => {
     let mouseX = 0;
     let mouseY = 0;
     let wheelDelta = 0;
+    let pendingFileImport = null;  // Set by file input handler
 
     // Timing
     let lastTime = performance.now();
@@ -97,6 +98,7 @@ globalThis.Input = (() => {
             keysPressed: Array.from(keysPressed),
             keysDown: Array.from(keysDown),
             dt,
+            fileImport: pendingFileImport,
         };
 
         // Clear per-frame state
@@ -104,9 +106,14 @@ globalThis.Input = (() => {
         mousePressed.clear();
         mouseReleased.clear();
         wheelDelta = 0;
+        pendingFileImport = null;
 
         return state;
     }
 
-    return { pollInput };
+    function setFileImport(content) {
+        pendingFileImport = content;
+    }
+
+    return { pollInput, setFileImport };
 })();

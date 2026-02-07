@@ -158,14 +158,10 @@ raylib_compat._set_js_bridge(
             if (!file) return;
             const reader = new FileReader();
             reader.onload = () => {
-                try {
-                    pyodide.runPython(`
-from game.save import _handle_file_import
-_handle_file_import(${JSON.stringify(reader.result)})
-`);
-                } catch (err) {
-                    console.error('Import error:', err);
-                }
+                // Queue file content for Python to pick up on next frame poll.
+                // Cannot call runPython here — Pyodide doesn't support concurrent
+                // Python execution while the async main loop is running.
+                Input.setFileImport(reader.result);
             };
             reader.readAsText(file);
         });

@@ -346,3 +346,8 @@ def is_key_pressed(key: int) -> bool:
 
 def take_screenshot(path: str) -> None:
     pass
+
+
+def get_pending_file_import():
+    """Return file content queued by the JS file input, or None."""
+    return _input_state.get('fileImport', None)

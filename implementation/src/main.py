@@ -38,9 +38,10 @@ from raylib_compat import (
     Vector2,
     set_exit_key,
     set_target_fps,
+    get_pending_file_import,
 )
 from game.simulation import Simulation
-from game.save import save_game, load_game
+from game.save import save_game, load_game, _handle_file_import
 
 from assets import sprite_path
 from game.layout import load_layout
@@ -243,6 +244,11 @@ async def main() -> None:
 
     while True:
             dt = get_frame_time()
+
+            # Check for pending file import (queued by JS file input)
+            pending_import = get_pending_file_import()
+            if pending_import is not None:
+                _handle_file_import(str(pending_import))
 
             # RE fn 10408 lines 387652-387665: ticks only run when
             # NOT manually paused AND no UI panel is open.  Controller+0x28
