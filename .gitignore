@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.so
+
+# Virtual environments
+decompilation/env/
+
+# Decompilation — large binaries and generated outputs
+decompilation/build/
+decompilation/outputs/
+decompilation/tmp/
+decompilation/tools/
+
+# Recovered binary blobs (large, derived from build/)
+decompilation/recovered/recovered_mono/raw/
+decompilation/recovered/recovered_mono_v2/
+decompilation/recovered/recovered_analysis/*.bin
+
+# Il2CppDumper generated DLLs (regenerable from build/)
+decompilation/recovered/il2cppdumper/DummyDll/
+
+# Implementation runtime artifacts
+implementation/src/__pycache__/
+implementation/src/game/__pycache__/
+implementation/src/save.json
+implementation/debug_screenshots/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE / AI agent configs (keep .claude for settings)
+.cursor/
+.vibe/
+.windsurf/
+.agents/
