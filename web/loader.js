@@ -64,7 +64,9 @@
 
     // ── 3. Write Python source files to Pyodide virtual FS ──────────
 
-    const srcBase = '../implementation/src/';
+    // Source base: overridable via <meta name="src-base">, defaults to 'src/'
+    const srcMeta = document.querySelector('meta[name="src-base"]');
+    const srcBase = srcMeta ? srcMeta.content : 'src/';
     const pyFiles = [
         'raylib_compat.py',
         'main.py',
@@ -94,7 +96,7 @@
     const allFiles = [
         ...pyFiles.map(f => ({ url: srcBase + f, dst: f })),
         ...dataFiles.map(f => ({ url: srcBase + f.src, dst: f.dst })),
-        { url: '../implementation/layout.json', dst: 'layout.json', optional: true },
+        { url: srcBase + '../layout.json', dst: 'layout.json', optional: true },
     ];
 
     let filesLoaded = 0;

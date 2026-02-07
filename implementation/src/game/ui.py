@@ -92,11 +92,13 @@ class Ui:
             f"{format_number_with_suffix(sim.max_reactor_heat)} "
             f"({heat_sign}{format_number_with_suffix(heat_delta)}/t)"
         )
+        heat_max_w = layout.heat_bar_x + layout.bar_width - text_x - 4
+        heat_font = _fit_font_size(heat_label, heat_max_w, 16)
         draw_text(
             heat_label,
             text_x,
             layout.heat_bar_y + 6,
-            16,
+            heat_font,
             Color(240, 80, 80, 255),
         )
 
@@ -125,11 +127,13 @@ class Ui:
             f"{format_number_with_suffix(sim.max_reactor_power)} "
             f"({power_sign}{format_number_with_suffix(power_delta)}/t)"
         )
+        power_max_w = layout.power_bar_x + layout.bar_width - text_x - 4
+        power_font = _fit_font_size(power_label, power_max_w, 16)
         draw_text(
             power_label,
             text_x,
             layout.power_bar_y + 6,
-            16,
+            power_font,
             Color(80, 200, 255, 255),
         )
 
@@ -142,11 +146,8 @@ class Ui:
             )
         else:
             money_text = f"${format_number_with_suffix(sim.store.money)}"
-        font_size = 16
-        if measure_text is not None:
-            text_width = measure_text(money_text, font_size)
-        else:
-            text_width = int(len(money_text) * font_size * 0.6)
+        font_size = _fit_font_size(money_text, layout.cash_w - 4, 16)
+        text_width = _measure(money_text, font_size)
         money_x = layout.cash_x + max(0, (layout.cash_w - text_width) // 2)
         draw_text(
             money_text,
@@ -171,11 +172,14 @@ class Ui:
             draw_texture_ex(tex, Vector2(bx, by), 0.0, 1.0, Color(255, 255, 255, 255))
             tx = bx + 10
             ty = by + int(tex.height / 2) - 8
+            btn_text_w = tex.width - 20
         else:
             draw_rectangle(bx, by, 220, 28, Color(60, 60, 70, 255))
             tx = bx + 8
             ty = by + 6
-        draw_text(label, tx, ty, 14, Color(240, 240, 240, 255))
+            btn_text_w = 204
+        vent_font = _fit_font_size(label, btn_text_w, 14)
+        draw_text(label, tx, ty, vent_font, Color(240, 240, 240, 255))
 
         # Sell All Power / Scrounge button
         # RE: "Sell All Power: +{power} $ (+{autoSellRate} $ per tick)"
@@ -197,11 +201,14 @@ class Ui:
             draw_texture_ex(tex, Vector2(bx, by), 0.0, 1.0, Color(255, 255, 255, 255))
             tx = bx + 10
             ty = by + int(tex.height / 2) - 8
+            btn_text_w = tex.width - 20
         else:
             draw_rectangle(bx, by, 320, 28, Color(60, 60, 70, 255))
             tx = bx + 8
             ty = by + 6
-        draw_text(label, tx, ty, 14, Color(240, 240, 240, 255))
+            btn_text_w = 304
+        sell_font = _fit_font_size(label, btn_text_w, 14)
+        draw_text(label, tx, ty, sell_font, Color(240, 240, 240, 255))
 
         # Stats panel is hidden until we wire the real stats page UI.
         new_selected, hovered = self.draw_store(sim, layout, mouse_x, mouse_y, mouse_pressed)
@@ -380,8 +387,10 @@ class Ui:
         title = comp.display_name or comp.name
         if placed is not None and placed.depleted:
             title = f"Depleted {title}"
+        # Center within the area left of pause/replace buttons
+        usable_w = right_edge - panel_x - margin
         title_w = _measure(title, font_title)
-        title_x = panel_x + max(0, (panel_w - title_w) // 2)
+        title_x = panel_x + max(0, (usable_w - title_w) // 2 + margin)
         # Push title down if per-tick lines occupy the top row
         title_y = panel_y + (24 if has_per_tick else 8)
         draw_text(title, title_x, title_y, font_title, text_color)
@@ -390,11 +399,13 @@ class Ui:
         description = _format_component_description(comp, sim)
         if placed is not None and placed.depleted:
             description = "This cell has run out of fuel and is now inert. Right-click to remove it."
-        desc_lines = _wrap_text(description, panel_w - 2 * margin, font_sm) if description else []
+        # Usable width stops before the pause/replace buttons
+        desc_max_w = right_edge - panel_x - margin
+        desc_lines = _wrap_text(description, desc_max_w, font_sm) if description else []
         y = title_y + 20
         for line in desc_lines:
             line_w = _measure(line, font_sm)
-            line_x = panel_x + max(0, (panel_w - line_w) // 2)
+            line_x = panel_x + max(0, (desc_max_w - line_w) // 2 + margin)
             draw_text(line, line_x, y, font_sm, text_color)
             y += 14
 
@@ -582,20 +593,22 @@ class Ui:
         mgr = sim.upgrade_manager
         text_color = Color(230, 230, 230, 255)
 
-        # Title
+        # Title — constrained to avoid overlapping pause/replace buttons
+        right_edge = layout.pause_x - margin
+        usable_w = right_edge - panel_x - margin
         title = mgr.display_name(u.index)
         if u.level > 0 and u.cost_multiplier != 0.0:
             title = f"{title} (Lv. {u.level})"
         title_w = _measure(title, font_title)
-        title_x = panel_x + max(0, (panel_w - title_w) // 2)
+        title_x = panel_x + max(0, (usable_w - title_w) // 2 + margin)
         draw_text(title, title_x, panel_y + 8, font_title, text_color)
 
         # Description
-        desc_lines = _wrap_text(u.description, panel_w - 2 * margin, font_sm)
+        desc_lines = _wrap_text(u.description, usable_w, font_sm)
         y = panel_y + 26
         for line in desc_lines:
             line_w = _measure(line, font_sm)
-            line_x = panel_x + max(0, (panel_w - line_w) // 2)
+            line_x = panel_x + max(0, (usable_w - line_w) // 2 + margin)
             draw_text(line, line_x, y, font_sm, text_color)
             y += 14
 
@@ -947,6 +960,16 @@ def _measure(text: str, font_size: int) -> int:
     if measure_text is not None:
         return measure_text(text, font_size)
     return int(len(text) * font_size * 0.6)
+
+
+def _fit_font_size(text: str, max_width: int, base_size: int, min_size: int = 8) -> int:
+    """Return the largest font size <= base_size that fits text within max_width."""
+    size = base_size
+    while size > min_size:
+        if _measure(text, size) <= max_width:
+            return size
+        size -= 1
+    return min_size
 
 
 def _wrap_text(text: str, max_width: int, font_size: int) -> list[str]:
