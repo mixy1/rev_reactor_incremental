@@ -19,5 +19,10 @@
 - Keep tooling (Il2CppDumper, Il2CppInspector, binaryen, etc.) under `decompilation/tools/`.
 - Keep Python/.NET environments under `decompilation/env/`.
 
+## Git
+- **Always use git.** Commit after completing meaningful units of work.
+- Write clear commit messages that describe the *why*, not just the *what*.
+- Never force-push, amend published commits, or skip hooks without explicit permission.
+
 ## Implementation
 - All new source code goes under `implementation/`.
