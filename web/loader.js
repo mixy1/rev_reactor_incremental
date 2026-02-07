@@ -30,36 +30,35 @@
         return;
     }
 
-    setProgress(10, `Loading ${manifest.length} sprites...`);
+    setProgress(10, `Loading sprites + Pyodide...`);
 
+    // Load sprites and Pyodide in parallel (both are large independent downloads)
     const images = {};
-    let loaded = 0;
+    let spriteCount = 0;
 
-    await Promise.all(manifest.map((name) => {
+    const spritePromise = Promise.all(manifest.map((name) => {
         return new Promise((resolve) => {
             const img = new Image();
             img.onload = () => {
                 images[name] = img;
                 Renderer.registerTexture(name, img);
-                loaded++;
-                const pct = 10 + (loaded / manifest.length) * 30;
-                setProgress(pct, `Sprites: ${loaded}/${manifest.length}`);
+                spriteCount++;
                 resolve();
             };
             img.onerror = () => {
                 console.warn('Failed to load sprite:', name);
-                loaded++;
+                spriteCount++;
                 resolve();
             };
             img.src = 'assets/sprites/' + name;
         });
     }));
 
-    // ── 2. Initialize Pyodide ───────────────────────────────────────
+    const pyodidePromise = loadPyodide();
 
-    setProgress(45, 'Loading Pyodide runtime...');
+    const [, pyodide] = await Promise.all([spritePromise, pyodidePromise]);
 
-    const pyodide = await loadPyodide();
+    setProgress(50, `Loaded ${spriteCount} sprites + Pyodide`);
 
     setProgress(65, 'Loading Python source files...');
 
@@ -91,37 +90,38 @@
     // Create directories in VFS
     pyodide.FS.mkdirTree('/home/pyodide/src/game');
 
-    for (let i = 0; i < pyFiles.length; i++) {
-        const file = pyFiles[i];
-        const pct = 65 + (i / pyFiles.length) * 15;
-        setProgress(pct, `Loading: ${file}`);
-        try {
-            const resp = await fetch(srcBase + file);
-            const text = await resp.text();
-            pyodide.FS.writeFile('/home/pyodide/src/' + file, text);
-        } catch (e) {
-            console.error('Failed to load Python file:', file, e);
-        }
-    }
+    // Fetch all Python, data, and config files in parallel
+    const allFiles = [
+        ...pyFiles.map(f => ({ url: srcBase + f, dst: f })),
+        ...dataFiles.map(f => ({ url: srcBase + f.src, dst: f.dst })),
+        { url: '../implementation/layout.json', dst: 'layout.json', optional: true },
+    ];
 
-    // Load data files
-    for (const { src, dst } of dataFiles) {
+    let filesLoaded = 0;
+    const fileResults = await Promise.all(allFiles.map(async ({ url, dst, optional }) => {
         try {
-            const resp = await fetch(srcBase + src);
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const text = await resp.text();
-            pyodide.FS.writeFile('/home/pyodide/src/' + dst, text);
+            filesLoaded++;
+            const pct = 65 + (filesLoaded / allFiles.length) * 15;
+            setProgress(pct, `Files: ${filesLoaded}/${allFiles.length}`);
+            return { dst, text };
         } catch (e) {
-            console.error('Failed to load data file:', src, e);
+            if (optional) {
+                console.warn(`${dst} not found, using defaults`);
+            } else {
+                console.error('Failed to load file:', url, e);
+            }
+            return null;
         }
-    }
+    }));
 
-    // Load layout.json from implementation root
-    try {
-        const resp = await fetch('../implementation/layout.json');
-        const text = await resp.text();
-        pyodide.FS.writeFile('/home/pyodide/src/layout.json', text);
-    } catch (e) {
-        console.warn('layout.json not found, using defaults');
+    // Write all fetched files to VFS
+    for (const result of fileResults) {
+        if (result) {
+            pyodide.FS.writeFile('/home/pyodide/src/' + result.dst, result.text);
+        }
     }
 
     setProgress(85, 'Initializing game...');
