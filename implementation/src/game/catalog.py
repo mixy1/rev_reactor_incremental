@@ -166,6 +166,8 @@ def _mono_index_path() -> Path:
 
 def _sprite_exists(name: str) -> bool:
     sprites_dir = _repo_root() / "decompilation" / "recovered" / "recovered_assets" / "sprites"
+    if not sprites_dir.exists():
+        return True  # Web build: sprites are JS Image objects, not on VFS
     return (sprites_dir / f"{name}.png").exists()
 
 
