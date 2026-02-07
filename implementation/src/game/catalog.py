@@ -215,6 +215,14 @@ def _stringliteral_path() -> Path:
 def _stringliteral_values() -> List[str]:
     path = _stringliteral_path()
     if not path.exists():
+        # Web build: use pre-extracted subset bundled alongside catalog
+        web_path = Path(__file__).resolve().parent / "stringliterals_web.json"
+        if web_path.exists():
+            try:
+                raw = json.loads(web_path.read_text(encoding="utf-8"))
+                return [v for v in raw if isinstance(v, str)]
+            except (OSError, json.JSONDecodeError):
+                return []
         return []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))

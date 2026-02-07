@@ -85,6 +85,7 @@
     const dataFiles = [
         { src: 'game/upgrade_data.json', dst: 'game/upgrade_data.json' },
         { src: 'game/component_types.json', dst: 'game/component_types.json' },
+        { src: 'game/stringliterals_web.json', dst: 'game/stringliterals_web.json' },
     ];
 
     // Create directories in VFS
