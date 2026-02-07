@@ -15,7 +15,7 @@
  *   7  END_SCISSOR       (none)                           (1 value)
  */
 
-const Renderer = (() => {
+globalThis.Renderer = (() => {
     const canvas = document.getElementById('game-canvas');
     const ctx = canvas.getContext('2d');
 

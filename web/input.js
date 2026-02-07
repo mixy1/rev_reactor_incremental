@@ -6,7 +6,7 @@
  * and clears per-frame flags (pressed/released).
  */
 
-const Input = (() => {
+globalThis.Input = (() => {
     const canvas = document.getElementById('game-canvas');
 
     // Per-frame edge-triggered state (cleared each poll)
