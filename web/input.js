@@ -22,6 +22,7 @@ globalThis.Input = (() => {
     let mouseY = 0;
     let wheelDelta = 0;
     let pendingFileImport = null;  // Set by file input handler
+    let wantFileDialog = false;    // Set by Python, consumed by next mousedown
 
     // Timing
     let lastTime = performance.now();
@@ -56,6 +57,16 @@ globalThis.Input = (() => {
             mousePressed.add(e.button);
         }
         mouseDown.add(e.button);
+
+        // Trigger file dialog from user gesture context
+        if (wantFileDialog) {
+            wantFileDialog = false;
+            const fi = document.getElementById('file-input');
+            if (fi) {
+                fi.value = '';
+                fi.click();
+            }
+        }
     });
 
     canvas.addEventListener('mouseup', (e) => {
@@ -115,5 +126,9 @@ globalThis.Input = (() => {
         pendingFileImport = content;
     }
 
-    return { pollInput, setFileImport };
+    function requestFileDialog() {
+        wantFileDialog = true;
+    }
+
+    return { pollInput, setFileImport, requestFileDialog };
 })();
