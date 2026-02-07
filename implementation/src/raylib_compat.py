@@ -135,6 +135,7 @@ if not _WEB:
 else:
     import array
     import time as _time
+    from pyodide.ffi import to_js as _to_js  # type: ignore
 
     # ── Opcodes ───────────────────────────────────────────────────────
     OP_CLEAR_BG = 0
@@ -146,8 +147,8 @@ else:
     OP_BEGIN_SCISSOR = 6
     OP_END_SCISSOR = 7
 
-    # ── Command buffer (module-level) ─────────────────────────────────
-    _cmds: array.array = array.array('d')
+    # ── Command buffer (module-level, reused across frames) ───────────
+    _cmds: list[float] = []
     _strings: list[str] = []
 
     # ── Input state (polled once per frame from JS) ──────────────────
@@ -189,6 +190,12 @@ else:
             self.width = width
             self.height = height
             self._name = name
+
+    class _Pos:
+        """Reusable mouse position container."""
+        __slots__ = ('x', 'y')
+        def __init__(self, x, y):
+            self.x = x; self.y = y
 
     # ── Key / mouse constants ────────────────────────────────────────
     KEY_F1 = 112
@@ -233,8 +240,8 @@ else:
     # ── Drawing frame ────────────────────────────────────────────────
 
     def begin_drawing() -> None:
-        global _cmds, _strings, _prev_input_state, _input_state, _frame_time
-        _cmds = array.array('d')
+        global _prev_input_state, _input_state, _frame_time
+        _cmds.clear()
         _strings.clear()
         _prev_input_state = _input_state
         if _js_poll_input is not None:
@@ -252,9 +259,9 @@ else:
 
     def end_drawing() -> None:
         if _js_render_batch is not None:
-            from pyodide.ffi import to_js  # type: ignore
-            js_cmds = to_js(_cmds, dict_converter=None)
-            js_strings = to_js(_strings)
+            buf = array.array('d', _cmds)
+            js_cmds = _to_js(buf, dict_converter=None)
+            js_strings = _to_js(_strings)
             _js_render_batch(js_cmds, js_strings)
             if hasattr(js_cmds, 'destroy'):
                 js_cmds.destroy()
@@ -264,36 +271,25 @@ else:
     # ── Background ───────────────────────────────────────────────────
 
     def clear_background(color: tuple) -> None:
-        _cmds.append(OP_CLEAR_BG)
-        _cmds.append(color[0]); _cmds.append(color[1])
-        _cmds.append(color[2]); _cmds.append(color[3])
+        _cmds.extend((OP_CLEAR_BG, color[0], color[1], color[2], color[3]))
 
     # ── Rectangle drawing ────────────────────────────────────────────
 
     def draw_rectangle(x: int, y: int, width: int, height: int, color: tuple) -> None:
-        _cmds.append(OP_FILL_RECT)
-        _cmds.append(float(x)); _cmds.append(float(y))
-        _cmds.append(float(width)); _cmds.append(float(height))
-        _cmds.append(color[0]); _cmds.append(color[1])
-        _cmds.append(color[2]); _cmds.append(color[3])
+        _cmds.extend((OP_FILL_RECT, float(x), float(y), float(width), float(height),
+                       color[0], color[1], color[2], color[3]))
 
     def draw_rectangle_lines(x: int, y: int, width: int, height: int, color: tuple) -> None:
-        _cmds.append(OP_STROKE_RECT)
-        _cmds.append(float(x)); _cmds.append(float(y))
-        _cmds.append(float(width)); _cmds.append(float(height))
-        _cmds.append(color[0]); _cmds.append(color[1])
-        _cmds.append(color[2]); _cmds.append(color[3])
+        _cmds.extend((OP_STROKE_RECT, float(x), float(y), float(width), float(height),
+                       color[0], color[1], color[2], color[3]))
 
     # ── Text ─────────────────────────────────────────────────────────
 
     def draw_text(text: str, x: int, y: int, size: int, color: tuple) -> None:
         str_idx = len(_strings)
         _strings.append(str(text))
-        _cmds.append(OP_DRAW_TEXT)
-        _cmds.append(float(str_idx)); _cmds.append(float(x))
-        _cmds.append(float(y)); _cmds.append(float(size))
-        _cmds.append(color[0]); _cmds.append(color[1])
-        _cmds.append(color[2]); _cmds.append(color[3])
+        _cmds.extend((OP_DRAW_TEXT, float(str_idx), float(x), float(y), float(size),
+                       color[0], color[1], color[2], color[3]))
 
     def measure_text(text: str, size: int) -> int:
         if _js_measure_text is not None:
@@ -331,30 +327,24 @@ else:
 
     def draw_texture_pro(texture, src_rect: tuple, dst_rect: tuple,
                          origin: tuple, rotation: float, tint: tuple) -> None:
-        _cmds.append(OP_TEXTURE_PRO)
-        _cmds.append(float(texture.id))
-        _cmds.append(float(src_rect[0])); _cmds.append(float(src_rect[1]))
-        _cmds.append(float(src_rect[2])); _cmds.append(float(src_rect[3]))
-        _cmds.append(float(dst_rect[0])); _cmds.append(float(dst_rect[1]))
-        _cmds.append(float(dst_rect[2])); _cmds.append(float(dst_rect[3]))
-        _cmds.append(tint[0]); _cmds.append(tint[1])
-        _cmds.append(tint[2]); _cmds.append(tint[3])
+        _cmds.extend((OP_TEXTURE_PRO, float(texture.id),
+                       float(src_rect[0]), float(src_rect[1]),
+                       float(src_rect[2]), float(src_rect[3]),
+                       float(dst_rect[0]), float(dst_rect[1]),
+                       float(dst_rect[2]), float(dst_rect[3]),
+                       tint[0], tint[1], tint[2], tint[3]))
 
     def draw_texture_ex(texture, position: tuple, rotation: float,
                         scale: float, tint: tuple) -> None:
-        _cmds.append(OP_TEXTURE_EX)
-        _cmds.append(float(texture.id))
-        _cmds.append(float(position[0])); _cmds.append(float(position[1]))
-        _cmds.append(float(rotation)); _cmds.append(float(scale))
-        _cmds.append(tint[0]); _cmds.append(tint[1])
-        _cmds.append(tint[2]); _cmds.append(tint[3])
+        _cmds.extend((OP_TEXTURE_EX, float(texture.id),
+                       float(position[0]), float(position[1]),
+                       float(rotation), float(scale),
+                       tint[0], tint[1], tint[2], tint[3]))
 
     # ── Scissor mode ─────────────────────────────────────────────────
 
     def begin_scissor_mode(x: int, y: int, w: int, h: int) -> None:
-        _cmds.append(OP_BEGIN_SCISSOR)
-        _cmds.append(float(x)); _cmds.append(float(y))
-        _cmds.append(float(w)); _cmds.append(float(h))
+        _cmds.extend((OP_BEGIN_SCISSOR, float(x), float(y), float(w), float(h)))
 
     def end_scissor_mode() -> None:
         _cmds.append(OP_END_SCISSOR)
@@ -362,13 +352,7 @@ else:
     # ── Input ────────────────────────────────────────────────────────
 
     def get_mouse_position():
-        mx = _input_state.get('mouseX', 0)
-        my = _input_state.get('mouseY', 0)
-        class _Pos:
-            __slots__ = ('x', 'y')
-            def __init__(self, x, y):
-                self.x = x; self.y = y
-        return _Pos(mx, my)
+        return _Pos(_input_state.get('mouseX', 0), _input_state.get('mouseY', 0))
 
     def is_mouse_button_pressed(button: int) -> bool:
         return button in _input_state.get('mousePressed', [])
