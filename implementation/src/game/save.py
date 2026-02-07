@@ -385,17 +385,26 @@ def export_save(sim: Simulation, path=None) -> None:
 
 
 def _try_import_data(encoded: str) -> dict | None:
-    """Try to parse import data, handling both our format and original game format.
+    """Try to parse import data in multiple formats.
 
-    Our format: base64 → JSON dict.
-    Original format: base64 → AES-256-CBC ciphertext → pipe-delimited text.
+    1. Raw JSON dict (desktop auto-save format)
+    2. base64 → JSON dict (web export format)
+    3. base64 → AES-256-CBC ciphertext → pipe-delimited (original game)
     """
+    # 1. Try raw JSON first (desktop save.json / direct paste)
+    try:
+        data = json.loads(encoded)
+        if isinstance(data, dict) and "version" in data:
+            return data
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 2. Try base64 → JSON (web export format)
     try:
         raw = base64.b64decode(encoded)
     except Exception:
         return None
 
-    # Try our format first: base64 → JSON
     try:
         data = json.loads(raw.decode("utf-8"))
         if isinstance(data, dict) and "version" in data:
@@ -403,7 +412,7 @@ def _try_import_data(encoded: str) -> dict | None:
     except (json.JSONDecodeError, UnicodeDecodeError):
         pass
 
-    # Try original game format: base64 → AES ciphertext → pipe-delimited
+    # 3. Try original game format: base64 → AES ciphertext → pipe-delimited
     if len(raw) % 16 == 0 and len(raw) >= 16:
         plaintext = _decrypt_original(raw)
         if plaintext and "|" in plaintext:
