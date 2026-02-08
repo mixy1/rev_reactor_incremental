@@ -177,7 +177,6 @@ globalThis.Renderer = (() => {
      * @param {Array<string>} strings - String table for text commands
      */
     function renderBatch(byteOffset, count, strings) {
-        configureCanvas();
         if (!_emModule) {
             return;
         }
