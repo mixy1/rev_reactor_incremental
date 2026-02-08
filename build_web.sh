@@ -12,7 +12,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SPRITES_SRC="../rev_reactor/decompilation/recovered/recovered_assets/sprites"
+SPRITES_CANDY_SRC="../rev_reactor/decompilation/recovered/recovered_assets/sprites_candy"
 SPRITES_DST="web/assets/sprites"
+SPRITES_CANDY_DST="web/assets/sprites_candy"
 ANALYSIS_SRC="../rev_reactor/decompilation/recovered/recovered_analysis"
 
 echo "=== Rev Reactor Web Build ==="
@@ -33,6 +35,19 @@ if [ -d "$SPRITES_DST" ]; then
 else
     ln -s "$(realpath "$SPRITES_SRC")" "$SPRITES_DST"
     echo "Linked sprites: $SPRITES_DST -> $SPRITES_SRC"
+fi
+
+# 1b. Set up candy sprite assets (if available)
+if [ -d "$SPRITES_CANDY_SRC" ]; then
+    if [ -L "$SPRITES_CANDY_DST" ]; then
+        rm "$SPRITES_CANDY_DST"
+    fi
+    if [ ! -d "$SPRITES_CANDY_DST" ]; then
+        ln -s "$(realpath "$SPRITES_CANDY_SRC")" "$SPRITES_CANDY_DST"
+        echo "Linked candy sprites: $SPRITES_CANDY_DST -> $SPRITES_CANDY_SRC"
+    fi
+else
+    echo "Note: Candy sprites not found at $SPRITES_CANDY_SRC (theme toggle will be inactive)"
 fi
 
 # 2. Generate manifest.json (list of all PNG filenames)

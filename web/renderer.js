@@ -77,6 +77,13 @@ globalThis.Renderer = (() => {
         };
     }
 
+    function swapTexture(name, newImg) {
+        const entry = texturesByName[name];
+        if (!entry) return;
+        textures[entry.id] = newImg;
+        entry.img = newImg;
+    }
+
     // String caches — avoid per-frame template literal allocations
     const _rgbaCache = new Map();
     const _rgbCache = new Map();
@@ -295,10 +302,12 @@ globalThis.Renderer = (() => {
         ctx,
         registerTexture,
         getTextureInfo,
+        swapTexture,
         measureTextWidth,
         renderBatch,
         setWasmMemory,
         waitFrame,
         textures,
+        texturesByName,
     };
 })();

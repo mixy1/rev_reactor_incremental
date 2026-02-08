@@ -194,6 +194,64 @@ except Exception:
         }
     });
 
+    // ── 5. Theme management ─────────────────────────────────────────
+
+    const defaultImages = {};  // name -> original Image (captured at load)
+    const candyImages = {};    // name -> candy Image (lazy-loaded)
+    let candyLoaded = false;
+    let currentTheme = localStorage.getItem('sprite-theme') || 'default';
+
+    // Snapshot the original images so we can restore them later
+    for (const [name, entry] of Object.entries(Renderer.texturesByName)) {
+        defaultImages[name] = entry.img;
+    }
+
+    async function loadCandySprites() {
+        if (candyLoaded) return;
+        const promises = manifest.map((name) => {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => { candyImages[name] = img; resolve(); };
+                img.onerror = () => { resolve(); };  // fall back to default
+                img.src = 'assets/sprites_candy/' + name;
+            });
+        });
+        await Promise.all(promises);
+        candyLoaded = true;
+    }
+
+    async function setTheme(theme) {
+        currentTheme = theme;
+        localStorage.setItem('sprite-theme', theme);
+        const btn = document.getElementById('theme-toggle');
+
+        if (theme === 'candy') {
+            await loadCandySprites();
+            for (const name of manifest) {
+                if (candyImages[name]) {
+                    Renderer.swapTexture(name, candyImages[name]);
+                }
+            }
+            if (btn) btn.classList.add('candy-active');
+        } else {
+            for (const name of manifest) {
+                if (defaultImages[name]) {
+                    Renderer.swapTexture(name, defaultImages[name]);
+                }
+            }
+            if (btn) btn.classList.remove('candy-active');
+        }
+    }
+
+    // Expose globally for the toggle button
+    globalThis.setTheme = setTheme;
+    globalThis.currentTheme = () => currentTheme;
+
+    // Apply saved theme preference (non-blocking)
+    if (currentTheme === 'candy') {
+        setTheme('candy');
+    }
+
     // Start the game
     try {
         await pyodide.runPythonAsync(`
