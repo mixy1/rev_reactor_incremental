@@ -264,11 +264,11 @@ else:
 
     def end_drawing() -> None:
         if _js_render_batch is not None:
-            # Zero-copy: pass WASM memory offset + count directly.
-            # JS creates a Float64Array VIEW into WASM memory — no ArrayBuffer allocation.
-            addr, count = _cmds.buffer_info()
+            js_cmds = _to_js(_cmds)
             js_strings = _to_js(_strings)
-            _js_render_batch(addr, count, js_strings)
+            _js_render_batch(js_cmds, js_strings)
+            if hasattr(js_cmds, 'destroy'):
+                js_cmds.destroy()
             if hasattr(js_strings, 'destroy'):
                 js_strings.destroy()
 
