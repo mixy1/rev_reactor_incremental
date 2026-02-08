@@ -161,7 +161,7 @@ class Ui:
         vent_amt = format_number_with_suffix(sim.manual_vent_amount, max_decimals=1)
         vent_rate = format_number_with_suffix(sim.auto_vent_rate_per_tick(), max_decimals=1)
         vent_cap = format_number_with_suffix(sim.preview_vent_capacity, max_decimals=1)
-        label = f"-{vent_amt} Heat (-{vent_rate}/t, vent cap {vent_cap}/t)"
+        label = f"-{vent_amt} Heat (-{vent_rate}/t, cap {vent_cap}/t)"
         bx, by = layout.vent_x, layout.vent_y
         tex = self.button_base
         if pressed_vent and self.button_pressed is not None:
