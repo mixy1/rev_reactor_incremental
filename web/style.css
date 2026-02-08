@@ -134,6 +134,8 @@ main {
 #game-canvas {
     display: block;
     border: 1px solid var(--border);
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
 }
 
 /* ── Loading screen ─────────────────────────────────────── */

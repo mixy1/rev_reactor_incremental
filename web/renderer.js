@@ -18,36 +18,13 @@
 globalThis.Renderer = (() => {
     const canvas = document.getElementById('game-canvas');
     const ctx = canvas.getContext('2d');
-    const logicalWidth = canvas.width;
-    const logicalHeight = canvas.height;
-    let deviceScaleX = 1;
-    let deviceScaleY = 1;
 
-    function configureCanvas() {
-        const dpr = Math.max(1, window.devicePixelRatio || 1);
-        const targetW = Math.round(logicalWidth * dpr);
-        const targetH = Math.round(logicalHeight * dpr);
-        const scaleX = targetW / logicalWidth;
-        const scaleY = targetH / logicalHeight;
-        if (canvas.width === targetW && canvas.height === targetH &&
-            scaleX === deviceScaleX && scaleY === deviceScaleY) {
-            return;
-        }
-
-        deviceScaleX = scaleX;
-        deviceScaleY = scaleY;
-        canvas.style.width = `${logicalWidth}px`;
-        canvas.style.height = `${logicalHeight}px`;
-        canvas.style.imageRendering = 'auto';
-        canvas.width = targetW;
-        canvas.height = targetH;
-        ctx.setTransform(deviceScaleX, 0, 0, deviceScaleY, 0, 0);
-        // Keep sprite scaling nearest-neighbor; improves crispness during scaled draws.
-        ctx.imageSmoothingEnabled = false;
-    }
-
-    configureCanvas();
-    window.addEventListener('resize', configureCanvas);
+    // Render at exactly 900x630 — no DPR scaling.
+    // CSS image-rendering: pixelated handles display upscaling via nearest-neighbor,
+    // keeping every pixel crisp regardless of devicePixelRatio.
+    canvas.width = 900;
+    canvas.height = 630;
+    ctx.imageSmoothingEnabled = false;
 
     // Texture registry: id -> { img, name }
     const textures = {};       // id -> Image
