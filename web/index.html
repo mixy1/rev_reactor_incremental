@@ -59,7 +59,7 @@
     <section id="changelog" class="changelog">
         <div class="changelog-content">
             <h2>Changelog</h2>
-            <p class="changelog-subtitle">Generated from <code>web/changelog.txt</code>.</p>
+            <p class="changelog-subtitle">Generated from <code>web/changelog.txt</code> (newest first).</p>
             <div id="changelog-entries" class="changelog-entries">
                 <p class="changelog-loading">Loading changelog...</p>
             </div>
@@ -119,39 +119,38 @@
                 .map((line) => line.trim())
                 .filter((line) => line.length > 0 && !line.startsWith('#'));
 
-            const groups = new Map();
+            const entries = [];
             for (const line of lines) {
-                const match = line.match(/^(\d{4}-\d{2}-\d{2})\s*(?:\t|\|)\s*(.+)$/);
+                const match = line.match(/^(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)\s*(?:\t|\|)\s*(.+)$/);
                 if (!match) continue;
-                const date = match[1];
+                const rawTs = match[1].replace('T', ' ');
+                let ts = rawTs;
+                if (/^\d{4}-\d{2}-\d{2}$/.test(ts)) ts += ' 00:00:00';
+                else if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}$/.test(ts)) ts += ':00';
                 const message = match[2];
-                if (!groups.has(date)) groups.set(date, []);
-                groups.get(date).push(message);
+                entries.push({ ts, message });
             }
 
-            if (groups.size === 0) {
+            if (entries.length === 0) {
                 setMessage('No changelog entries found.', 'changelog-empty');
                 return;
             }
 
+            entries.sort((a, b) => b.ts.localeCompare(a.ts));
             host.innerHTML = '';
-            const dates = Array.from(groups.keys()).reverse();
-            for (const date of dates) {
+            for (const entry of entries) {
                 const article = document.createElement('article');
                 article.className = 'changelog-entry';
 
                 const dateEl = document.createElement('div');
                 dateEl.className = 'changelog-date';
-                dateEl.textContent = date;
+                dateEl.textContent = entry.ts;
                 article.appendChild(dateEl);
 
-                const ul = document.createElement('ul');
-                for (const message of groups.get(date)) {
-                    const li = document.createElement('li');
-                    li.textContent = message;
-                    ul.appendChild(li);
-                }
-                article.appendChild(ul);
+                const messageEl = document.createElement('p');
+                messageEl.className = 'changelog-message';
+                messageEl.textContent = entry.message;
+                article.appendChild(messageEl);
 
                 host.appendChild(article);
             }

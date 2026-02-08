@@ -312,6 +312,12 @@ main {
     line-height: 1.4;
 }
 
+.changelog-message {
+    color: var(--fg);
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
 .changelog-loading,
 .changelog-empty,
 .changelog-error {

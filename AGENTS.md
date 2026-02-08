@@ -31,4 +31,4 @@
 ## Web Changelog
 - Maintain `web/changelog.txt` as the user-facing changelog source.
 - Generate the site changelog UI from `web/changelog.txt`; do not hardcode changelog entries in `web/index.html`.
-- For meaningful changes, append concise dated entries to `web/changelog.txt` using `YYYY-MM-DD<TAB>message`.
+- For meaningful changes, append concise timestamped entries to `web/changelog.txt` using `YYYY-MM-DD HH:MM:SS<TAB>message`.
