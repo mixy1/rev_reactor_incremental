@@ -18,6 +18,30 @@
 globalThis.Renderer = (() => {
     const canvas = document.getElementById('game-canvas');
     const ctx = canvas.getContext('2d');
+    const logicalWidth = canvas.width;
+    const logicalHeight = canvas.height;
+    let devicePixelRatio = 1;
+
+    function configureCanvas() {
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const targetW = Math.round(logicalWidth * dpr);
+        const targetH = Math.round(logicalHeight * dpr);
+        if (canvas.width === targetW && canvas.height === targetH && dpr === devicePixelRatio) {
+            return;
+        }
+
+        devicePixelRatio = dpr;
+        canvas.style.width = `${logicalWidth}px`;
+        canvas.style.height = `${logicalHeight}px`;
+        canvas.width = targetW;
+        canvas.height = targetH;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        // Keep sprite scaling nearest-neighbor; improves crispness during scaled draws.
+        ctx.imageSmoothingEnabled = false;
+    }
+
+    configureCanvas();
+    window.addEventListener('resize', configureCanvas);
 
     // Texture registry: id -> { img, name }
     const textures = {};       // id -> Image
@@ -94,7 +118,7 @@ globalThis.Renderer = (() => {
         const s = size | 0;
         let f = _fontCache.get(s);
         if (f === undefined) {
-            f = `${s}px monospace`;
+            f = `${s}px "JetBrains Mono", "Consolas", "Courier New", monospace`;
             _fontCache.set(s, f);
         }
         return f;
@@ -170,6 +194,10 @@ globalThis.Renderer = (() => {
      * @param {Array<string>} strings - String table for text commands
      */
     function renderBatch(byteOffset, count, strings) {
+        configureCanvas();
+        if (!_emModule) {
+            return;
+        }
         const elemOffset = byteOffset / 8;
         const cmds = _emModule.HEAPF64.subarray(elemOffset, elemOffset + count);
         const len = cmds.length;
@@ -182,7 +210,7 @@ globalThis.Renderer = (() => {
                 case 0: { // CLEAR_BG: r,g,b,a
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
                     ctx.fillStyle = rgba(r, g, b, a);
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillRect(0, 0, logicalWidth, logicalHeight);
                     break;
                 }
                 case 1: { // FILL_RECT: x,y,w,h,r,g,b,a
@@ -213,7 +241,7 @@ globalThis.Renderer = (() => {
                     ctx.font = getFont(size);
                     ctx.fillStyle = rgba(r, g, b, a);
                     ctx.textBaseline = 'top';
-                    ctx.fillText(strings[strIdx] || '', x, y);
+                    ctx.fillText(strings[strIdx] || '', Math.round(x), Math.round(y));
                     break;
                 }
                 case 4: { // TEXTURE_PRO: texId,sx,sy,sw,sh,dx,dy,dw,dh,r,g,b,a

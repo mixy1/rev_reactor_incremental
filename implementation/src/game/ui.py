@@ -371,9 +371,10 @@ class Ui:
         )
 
         # ── Slot 5: Power Per Tick — top-left ──
+        top_row_y = panel_y + 12
         if has_per_tick:
             ppt = f"Power Per Tick: {format_number_with_suffix(placed.last_power)}"
-            draw_text(ppt, panel_x + margin, panel_y + 8, font_sm, text_color)
+            draw_text(ppt, panel_x + margin, top_row_y, font_sm, text_color)
 
         # ── Slot 4: Heat Per Tick — top-right ──
         # Right boundary is left of pause/replace buttons to avoid overlap.
@@ -381,7 +382,7 @@ class Ui:
         if has_per_tick:
             hpt = f"Heat Per Tick: {format_number_with_suffix(placed.last_heat)}"
             hw = _measure(hpt, font_sm)
-            draw_text(hpt, right_edge - hw, panel_y + 8, font_sm, text_color)
+            draw_text(hpt, right_edge - hw, top_row_y, font_sm, text_color)
 
         # ── Slot 0: Title — centered ──
         title = comp.display_name or comp.name
@@ -392,7 +393,7 @@ class Ui:
         title_w = _measure(title, font_title)
         title_x = panel_x + max(0, (usable_w - title_w) // 2 + margin)
         # Push title down if per-tick lines occupy the top row
-        title_y = panel_y + (24 if has_per_tick else 8)
+        title_y = panel_y + (28 if has_per_tick else 12)
         draw_text(title, title_x, title_y, font_title, text_color)
 
         # ── Slot 1: Description — centered, wrapped, below title ──
