@@ -42,8 +42,6 @@ from raylib_compat import (
     KEY_F3,
     KEY_SPACE,
     KEY_ESCAPE,
-    KEY_X,
-    KEY_Y,
     Rectangle,
     Vector2,
     set_exit_key,
@@ -56,7 +54,8 @@ if not _WEB:
         WindowShouldClose,
         close_window,
         KEY_F4,
-        KEY_F5,
+        KEY_X,
+        KEY_Y,
         take_screenshot,
         unload_texture,
     )
@@ -339,11 +338,11 @@ async def main() -> None:
                     sim.selected_component_index = -1
 
             # X: debug — multiply money by 10
-            if is_key_pressed(KEY_X):
+            if not _WEB and is_key_pressed(KEY_X):
                 sim.store.money = max(sim.store.money * 10, 10.0)
 
             # Y: debug — multiply exotic particles by 10
-            if is_key_pressed(KEY_Y):
+            if not _WEB and is_key_pressed(KEY_Y):
                 sim.store.exotic_particles = max(sim.store.exotic_particles * 10, 10.0)
 
             # ── Mouse state ──────────────────────────────────────────
@@ -497,6 +496,10 @@ async def main() -> None:
                         sim.selected_component_index = -1
             elif not is_mouse_button_down(MOUSE_BUTTON_RIGHT):
                 last_sell_cell = None
+
+            # Keep upgrade effects and per-tick preview metrics current even when
+            # ticks are suppressed (paused / non-reactor views).
+            sim.refresh_live_preview()
 
             begin_drawing()
             clear_background(Color(18, 18, 22, 255))

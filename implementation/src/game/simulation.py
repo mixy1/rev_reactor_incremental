@@ -116,6 +116,8 @@ class Simulation:
     stored_power: float = 0.0        # Reactor+0x30 accumulated power (manual sell to convert)
     last_heat_change: float = 0.0    # per-tick delta for UI
     last_power_change: float = 0.0   # per-tick delta for UI
+    preview_vent_capacity: float = 0.0    # current vent dissipation capacity (/tick)
+    preview_outlet_capacity: float = 0.0  # current outlet transfer capacity (/tick)
 
     # Max capacities (RE: unnamed_function_10412/10413)
     # Heat: GetStatCached(1, 0xb) * 1000.0 + sum(component contributions)
@@ -193,6 +195,8 @@ class Simulation:
 
         # Step 1: PrepareMultipliers
         self.upgrade_manager.prepare_multipliers(self)
+        self.preview_vent_capacity = self.vent_dissipation_capacity_per_tick()
+        self.preview_outlet_capacity = self.outlet_transfer_capacity_per_tick()
 
         # Step 2: DistributePulses (recalc when layout changes)
         if self._pulses_dirty:
@@ -478,6 +482,81 @@ class Simulation:
         self.store.power_produced_this_game += total_power
         return total_power, total_heat_to_reactor
 
+    def _estimate_generation_preview(self) -> Tuple[float, float]:
+        """Estimate next-tick generated power/heat without mutating simulation state."""
+        if self.grid is None:
+            return 0.0, 0.0
+
+        total_power = 0.0
+        total_heat_to_reactor = 0.0
+
+        # Mirror overheat multiplier logic from _generate_power_and_heat.
+        overheat_mult = 1.0
+        if self.reactor_heat > 1000.0:
+            cell_eff = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.CELL_EFFECTIVENESS)
+            overheat_mult = (math.log(self.reactor_heat) / math.log(1000.0)) * (cell_eff - 1.0) * 0.01 + 1.0
+
+        for x, y, z, comp in self.grid.iter_cells():
+            if comp is None or comp.depleted:
+                continue
+            if comp.stats.energy_per_pulse <= 0:
+                continue
+
+            pulse_count = comp.pulse_count
+            tid = comp.stats.component_type_id
+
+            epp = comp.stats.energy_per_pulse * self._stat_mult(tid, StatCategory.ENERGY_PER_PULSE)
+            power = float(pulse_count) * epp
+
+            if tid == 16:
+                power *= self.depleted_protium_count / 100.0 + 1.0
+
+            hpp = comp.stats.heat_per_pulse * self._stat_mult(tid, StatCategory.HEAT_PER_PULSE)
+            cell_area = comp.stats.cell_width * comp.stats.cell_height
+            heat = (float(pulse_count * pulse_count) * hpp) / max(1, cell_area)
+
+            if tid == 18:
+                max_dur = comp.stats.max_durability * self._stat_mult(tid, StatCategory.MAX_DURABILITY)
+                if max_dur > 0:
+                    phase = (comp.durability / max_dur) * 8.0 * math.pi
+                    cos_val = math.cos(phase)
+                    power *= (1.0 - cos_val) / 2.0
+                    heat *= (1.0 + cos_val) / 2.0
+
+            if tid == 17:
+                occupied = 0
+                for dy in range(-3, 4):
+                    for dx in range(-3, 4):
+                        nx, ny = x + dx, y + dy
+                        if 0 <= nx < self.grid.width and 0 <= ny < self.grid.height:
+                            if self.grid.get(nx, ny, z) is not None:
+                                occupied += 1
+                power *= 1.0 - occupied * 0.02
+
+            reflector_mult = 1.0
+            absorber_count = 0
+            for nx, ny, nz in self.grid.neighbors(x, y, z):
+                ncomp = self.grid.get(nx, ny, nz)
+                if ncomp is None:
+                    continue
+                if ncomp.stats.reflects_pulses > 0 and not ncomp.depleted:
+                    ref_bonus = self._stat_mult(ncomp.stats.component_type_id, StatCategory.REFLECTOR_EFFECTIVENESS)
+                    reflector_mult += 0.1 * ref_bonus
+                if ncomp.stats.heat_capacity > 0:
+                    absorber_count += 1
+
+            power *= reflector_mult * overheat_mult
+
+            # Keep hover/info panel stats fresh even while paused.
+            comp.last_power = power
+            comp.last_heat = heat
+
+            total_power += power
+            if absorber_count == 0:
+                total_heat_to_reactor += heat
+
+        return total_power, total_heat_to_reactor
+
     def _heat_exchange(self) -> None:
         """RE: fn 10424 — Only exchangers drive heat redistribution.
 
@@ -752,6 +831,65 @@ class Simulation:
         With no upgrades (autoVentMult=1.0→bonus-1=0): rate = maxHeat * 0.0001"""
         auto_vent_bonus = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.AUTO_VENT_RATE)
         return self.max_reactor_heat * (auto_vent_bonus - 1.0) * 0.01 + self.max_reactor_heat * 0.0001
+
+    def vent_dissipation_capacity_per_tick(self) -> float:
+        """Maximum per-tick heat dissipation to air from vent-like components."""
+        total = 0.0
+        for comp in self.components:
+            if comp.depleted or comp.stats.self_vent_rate <= 0:
+                continue
+            if comp.stats.type_of_component in ("Exchanger", "Inlet", "Outlet"):
+                continue
+            vent_bonus = self._stat_mult(comp.stats.component_type_id, StatCategory.SELF_VENT_RATE)
+            total += comp.stats.self_vent_rate * vent_bonus * self.self_vent_mult
+        return total
+
+    def outlet_transfer_capacity_per_tick(self) -> float:
+        """Maximum per-tick reactor->component transfer capacity from outlets."""
+        if self.grid is None:
+            return 0.0
+        total = 0.0
+        for comp in self.components:
+            if comp.depleted or comp.stats.reactor_vent_rate <= 0:
+                continue
+            if comp.stats.type_of_component != "Outlet":
+                continue
+            rate = comp.stats.reactor_vent_rate * self._stat_mult(
+                comp.stats.component_type_id, StatCategory.REACTOR_TRANSFER_RATE
+            ) * self.heat_exchange_mult
+            absorber_count = 0
+            for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
+                ncomp = self.grid.get(nx, ny, nz)
+                if ncomp is not None and ncomp.stats.heat_capacity > 0:
+                    absorber_count += 1
+            if absorber_count > 0:
+                total += absorber_count * rate
+        return total
+
+    def refresh_live_preview(self) -> None:
+        """Refresh derived stats/deltas without advancing simulation time.
+
+        This keeps UI values responsive when the reactor is paused or when a panel
+        is open and ticks are suppressed.
+        """
+        self.upgrade_manager.prepare_multipliers(self)
+        if self._pulses_dirty:
+            self._distribute_pulses()
+            self._pulses_dirty = False
+
+        power_gen, heat_gen = self._estimate_generation_preview()
+        self.last_power_change = power_gen
+
+        projected_heat = self.reactor_heat + heat_gen
+        auto_vent = self.auto_vent_rate_per_tick()
+        if projected_heat > self.max_reactor_heat and heat_gen <= 0:
+            overheat_decay = (projected_heat - self.max_reactor_heat) * 0.05
+            auto_vent = max(auto_vent, overheat_decay)
+        vented = min(projected_heat, auto_vent) if (auto_vent > 0 and projected_heat > 0) else 0.0
+        self.last_heat_change = heat_gen - vented
+
+        self.preview_vent_capacity = self.vent_dissipation_capacity_per_tick()
+        self.preview_outlet_capacity = self.outlet_transfer_capacity_per_tick()
 
     def auto_sell_rate_per_tick(self) -> float:
         """RE: unnamed_function_10417 — auto-sell rate shown on sell button.

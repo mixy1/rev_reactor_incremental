@@ -31,7 +31,7 @@ globalThis.Input = (() => {
 
     document.addEventListener('keydown', (e) => {
         // Prevent browser defaults for game keys
-        if (e.keyCode >= 112 && e.keyCode <= 116) e.preventDefault(); // F1-F5
+        if (e.keyCode >= 112 && e.keyCode <= 115) e.preventDefault(); // F1-F4
         if (e.keyCode === 32) e.preventDefault(); // Space
 
         if (!keysDown.has(e.keyCode)) {
