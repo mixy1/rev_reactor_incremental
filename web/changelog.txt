@@ -1,0 +1,70 @@
+# Rev Reactor Changelog
+# Format: YYYY-MM-DD<TAB>message
+
+2026-02-07	Initial commit: full project state with RE artifacts, documentation, and implementation
+2026-02-07	Add git usage requirement to AGENTS.md
+2026-02-07	Port game to browser via Pyodide + Canvas2D
+2026-02-07	Fix texture ID mismatch between Python and JS
+2026-02-07	Fix Renderer/Input not visible to Pyodide's js module
+2026-02-07	Fix empty shop: skip sprite filesystem check in web build
+2026-02-07	Fix empty component descriptions in web build
+2026-02-07	Fix save import: use frame-based polling instead of concurrent runPython
+2026-02-07	Fix save import: trigger file dialog from user gesture context
+2026-02-07	Fix save import data flow: revert dialog change, fix polling
+2026-02-07	Fix save import: add raw JSON as first format to try
+2026-02-07	Add pure-Python AES decrypt for original saves; parallelize loading
+2026-02-07	Make all modified files dual-compatible (native+web); redesign site
+2026-02-07	Fix text overflow in UI; add Cloudflare Pages build
+2026-02-07	Fix GitHub link in header nav
+2026-02-07	Fix JsProxy memory leak causing WASM stack_buffer_overrun
+2026-02-07	Guard JsProxy .destroy() calls with hasattr check
+2026-02-07	Reduce per-frame allocation churn in web renderer
+2026-02-07	Fix active venting/exchangers to use tier-weighted capacitor sum
+2026-02-07	Eliminate per-frame buffer copy in web renderer
+2026-02-08	Zero-copy WASM memory view for command buffer rendering
+2026-02-08	Fix WASM memory access: use Emscripten HEAPF64 instead of wasmMemory
+2026-02-08	Reduce per-frame JS heap allocations across rendering pipeline
+2026-02-08	Throttle web game loop to vsync via requestAnimationFrame
+2026-02-08	Fix frame throttle: use asyncio.sleep(1/60) instead of rAF future
+2026-02-08	Proper vsync: await JS rAF Promise instead of asyncio.sleep
+2026-02-08	Revert zero-copy HEAPF64 approach to fix WASM range check crash
+2026-02-08	Restore zero-copy HEAPF64 rendering — crashes predate this code
+2026-02-08	web: upgrade Pyodide runtime to mitigate renderer fast-fail
+2026-02-08	input: retry placement every tick while left mouse is held
+2026-02-08	input: keep store selection while right-drag selling
+2026-02-08	ui/web: lower top banner text and sharpen canvas fonts
+2026-02-08	ui: tighten text layout and formatting across core screens
+2026-02-08	sim/ui: keep preview stats live while paused and expose dissipation caps
+2026-02-08	ui/sim: show vent cap on button and clamp reactor heat non-negative
+2026-02-08	ui: revert vent button label to generic cap wording
+2026-02-08	web: sharpen canvas text rendering
+2026-02-08	web: fix fuzzy 100% zoom by using exact DPR backing
+2026-02-08	agents: require auto-push after each local commit
+2026-02-08	web: refine canvas scale mapping for sharper 100% text
+2026-02-08	Fix fuzzy rendering: use 1:1 pixel resolution, no DPR scaling
+2026-02-08	Remove stale configureCanvas() call in renderBatch
+2026-02-08	Fix stale logicalWidth/Height reference in CLEAR_BG opcode
+2026-02-08	Remove last stale DPR references (deviceScaleX/Y in text rendering)
+2026-02-08	Route text rendering to DPR-scaled overlay canvas for smooth anti-aliased text
+2026-02-08	Fix text overlay alignment and DPR-scale game canvas for crisp rendering
+2026-02-08	Remove text overlay, render everything on DPR-scaled game canvas
+2026-02-08	Add candy theme sprites and runtime theme toggle
+2026-02-08	Fix theme toggle by wiring click handler from loader.js
+2026-02-08	Improve outlet/vent bottleneck warning visibility
+2026-02-08	Prevent locked shop pages from hiding tab UI
+2026-02-08	Render outlet bottleneck warnings on outlet components
+2026-02-08	Scope outlet warning icons and text to affected outlets
+2026-02-08	Base outlet warnings on adjacent vent capacity
+2026-02-08	Clarify outlet warning description text
+2026-02-08	Regenerate all 185 candy sprites with transparency and themed UI
+2026-02-08	Regenerate all candy sprites with pro model for crisp pixel art
+2026-02-08	Replace candy theme with decayed/abandoned theme
+2026-02-08	Regenerate decayed sprites preserving original colors
+2026-02-08	Fix decayed button hover/pressed sprites appearing to shrink
+2026-02-08	Fix decayed grid tiles being 4x too large
+2026-02-08	Use single-outlet rate for warning indicator checks
+2026-02-08	Keep web simulation ticking in hidden tabs
+2026-02-08	Use fixed hidden-tab dt to avoid catch-up bursts
+2026-02-08	Fix decayed sprite alpha holes and darken unpurchasable items
+2026-02-08	Preserve drag build/sell across canvas exit
+2026-02-08	Add changelog.txt as source of truth and render site changelog from it

@@ -227,6 +227,78 @@ main {
     color: var(--muted-fg);
 }
 
+/* ── Changelog ──────────────────────────────────────────── */
+
+.changelog {
+    padding: 0 1.5rem 1.5rem;
+}
+
+.changelog-content {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(28, 28, 28, 0.9), rgba(20, 20, 20, 0.9));
+}
+
+.changelog-content h2 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+}
+
+.changelog-subtitle {
+    color: var(--muted-fg);
+    font-size: 0.875rem;
+    margin-bottom: 0.75rem;
+}
+
+.changelog-subtitle code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--yellow);
+}
+
+.changelog-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.changelog-entry {
+    border: 1px solid var(--border);
+    background: rgba(13, 13, 13, 0.8);
+    padding: 0.65rem 0.8rem;
+}
+
+.changelog-date {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--yellow);
+    font-size: 0.8rem;
+    margin-bottom: 0.35rem;
+}
+
+.changelog-entry ul {
+    margin-left: 1rem;
+}
+
+.changelog-entry li {
+    color: var(--fg);
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
+.changelog-loading,
+.changelog-empty,
+.changelog-error {
+    color: var(--muted-fg);
+    font-size: 0.875rem;
+}
+
+.changelog-error {
+    color: #ff9b9b;
+}
+
 /* ── Footer ─────────────────────────────────────────────── */
 
 .footer {
@@ -299,6 +371,14 @@ main {
         flex-direction: column;
         gap: 0.75rem;
         align-items: flex-start;
+    }
+
+    .changelog {
+        padding: 0 0.75rem 1rem;
+    }
+
+    .changelog-content {
+        padding: 0.75rem;
     }
 
     .footer-content {

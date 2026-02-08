@@ -23,6 +23,7 @@
             <nav class="nav-links">
                 <a href="https://mixy.one" target="_blank" rel="noopener">mixy.one</a>
                 <a href="https://github.com/mixy1" target="_blank" rel="noopener">GitHub</a>
+                <a href="#changelog">Changelog</a>
                 <button id="theme-toggle" class="theme-toggle-btn">Decayed</button>
             </nav>
         </div>
@@ -46,6 +47,16 @@
             <div id="loading-status">Initializing...</div>
         </div>
     </main>
+
+    <section id="changelog" class="changelog">
+        <div class="changelog-content">
+            <h2>Changelog</h2>
+            <p class="changelog-subtitle">Generated from <code>web/changelog.txt</code>.</p>
+            <div id="changelog-entries" class="changelog-entries">
+                <p class="changelog-loading">Loading changelog...</p>
+            </div>
+        </div>
+    </section>
 
     <footer class="footer">
         <div class="footer-content">
@@ -72,6 +83,7 @@
 
     <script src="renderer.js"></script>
     <script src="input.js"></script>
+    <script src="changelog.js"></script>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
     <script src="loader.js"></script>
 </body>
