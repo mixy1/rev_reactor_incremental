@@ -175,6 +175,18 @@ class Grid:
             return x, y
         return None
 
+    def screen_to_cell_unbounded(self, sx: int, sy: int) -> Optional[tuple[int, int]]:
+        """Map screen coords to grid coords without viewport clipping.
+
+        Used for drag interactions when cursor temporarily leaves the
+        game canvas while the mouse button is still held.
+        """
+        x = int((sx - self.origin_x + self.scroll_x) // self.cell_size)
+        y = int((sy - self.origin_y + self.scroll_y) // self.cell_size)
+        if 0 <= x < self.width and 0 <= y < self.height:
+            return x, y
+        return None
+
     def draw(self, line_color: Color) -> None:
         if not self.needs_scroll:
             # Original behavior: use full_texture if available

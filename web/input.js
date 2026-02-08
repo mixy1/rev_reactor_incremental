@@ -46,10 +46,18 @@ globalThis.Input = (() => {
 
     // ── Mouse ───────────────────────────────────────────────────────
 
-    canvas.addEventListener('mousemove', (e) => {
+    function updateMousePosition(e) {
         const rect = canvas.getBoundingClientRect();
         mouseX = e.clientX - rect.left;
         mouseY = e.clientY - rect.top;
+    }
+
+    canvas.addEventListener('mousemove', updateMousePosition);
+    // Keep position updated while dragging outside the canvas.
+    document.addEventListener('mousemove', (e) => {
+        if (mouseDown.size > 0) {
+            updateMousePosition(e);
+        }
     });
 
     canvas.addEventListener('mousedown', (e) => {
@@ -74,6 +82,12 @@ globalThis.Input = (() => {
         mouseReleased.add(e.button);
     });
 
+    // Release held state even when mouseup happens outside the canvas.
+    document.addEventListener('mouseup', (e) => {
+        mouseDown.delete(e.button);
+        mouseReleased.add(e.button);
+    });
+
     // Prevent context menu (game uses right-click for selling)
     canvas.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -87,10 +101,8 @@ globalThis.Input = (() => {
         wheelDelta += -e.deltaY / 100;
     }, { passive: false });
 
-    // Handle mouse leaving the canvas
-    canvas.addEventListener('mouseleave', () => {
-        mouseDown.clear();
-    });
+    // Do not clear held buttons on mouseleave; we need drag actions to
+    // continue when cursor exits and re-enters the game area.
 
     // ── Poll interface ──────────────────────────────────────────────
 

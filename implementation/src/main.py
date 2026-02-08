@@ -450,7 +450,10 @@ async def main() -> None:
 
             # ── Grid: Left click — place / replace (reactor view only) ──
             if sim.view_mode == "reactor" and sim.grid is not None and is_mouse_button_down(MOUSE_BUTTON_LEFT) and not scrollbar_consumed:
-                cell = sim.grid.screen_to_cell(int(mx), int(my))
+                if 0 <= mx < layout.window_width and 0 <= my < layout.window_height:
+                    cell = sim.grid.screen_to_cell(int(mx), int(my))
+                else:
+                    cell = sim.grid.screen_to_cell_unbounded(int(mx), int(my))
                 if cell is not None:
                     cx, cy = cell
                     selected = sim.selected_component()
@@ -478,7 +481,10 @@ async def main() -> None:
             #   2. Mouse over empty grid cell + RMB down → deselect (line 388094)
             #   Mouse over occupied grid cell + RMB held → sell (line 388084)
             if sim.view_mode == "reactor" and sim.grid is not None and is_mouse_button_down(MOUSE_BUTTON_RIGHT):
-                cell = sim.grid.screen_to_cell(int(mx), int(my))
+                if 0 <= mx < layout.window_width and 0 <= my < layout.window_height:
+                    cell = sim.grid.screen_to_cell(int(mx), int(my))
+                else:
+                    cell = sim.grid.screen_to_cell_unbounded(int(mx), int(my))
                 if cell is not None:
                     if cell != last_sell_cell:
                         cx, cy = cell
