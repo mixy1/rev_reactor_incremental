@@ -27,6 +27,15 @@ from game.simulation import ReactorComponent, Simulation
 from game.upgrades import UpgradeManager, UpgradeType
 
 
+def _has_outlet_vent_bottleneck(sim: Simulation) -> bool:
+    """True when vent dissipation exceeds outlet transfer throughput."""
+    return (
+        sim.preview_vent_capacity > 0.0
+        and sim.preview_outlet_capacity > 0.0
+        and sim.preview_outlet_capacity + 1e-6 < sim.preview_vent_capacity
+    )
+
+
 @dataclass
 class Ui:
     heat_icon: Optional[Texture2D] = None
@@ -184,6 +193,13 @@ class Ui:
         tx = bx + max(0, (btn_w - vent_text_w) // 2)
         ty = by + max(0, (btn_h - vent_font) // 2) - 1
         draw_text(label, tx, ty, vent_font, Color(240, 240, 240, 255))
+        if _has_outlet_vent_bottleneck(sim):
+            warn_w = 12
+            warn_h = 12
+            warn_x = bx + btn_w - warn_w - 6
+            warn_y = by + (btn_h - warn_h) // 2
+            draw_rectangle(warn_x, warn_y, warn_w, warn_h, Color(245, 200, 60, 255))
+            draw_text("!", warn_x + 3, warn_y - 1, 10, Color(40, 40, 30, 255))
 
         # Sell All Power / Scrounge button
         # RE: "Sell All Power: +{power} $ (+{autoSellRate} $ per tick)"
@@ -416,6 +432,30 @@ class Ui:
             line_x = panel_x + max(0, (desc_max_w - line_w) // 2 + margin)
             draw_text(line, line_x, y, font_sm, text_color)
             y += 14
+
+        # Throughput warning: outlets are the bottleneck relative to vent capacity.
+        show_outlet_warning = (
+            comp.type_of_component in ("Outlet", "Vent")
+            and _has_outlet_vent_bottleneck(sim)
+        )
+        if show_outlet_warning:
+            outlet_cap = format_number_with_suffix(sim.preview_outlet_capacity, max_decimals=1)
+            vent_cap = format_number_with_suffix(sim.preview_vent_capacity, max_decimals=1)
+            warning_text = (
+                f"Warning icon: outlets move {outlet_cap}/t, but vents can dissipate {vent_cap}/t."
+            )
+            warning_font = 11
+            warning_color = Color(255, 220, 90, 255)
+            icon_x = panel_x + margin
+            icon_y = y + 2
+            draw_rectangle(icon_x, icon_y, 10, 10, Color(245, 200, 60, 255))
+            draw_text("!", icon_x + 3, icon_y - 1, 10, Color(40, 40, 30, 255))
+
+            wy = y
+            warn_lines = _wrap_text(warning_text, max(20, desc_max_w - 18), warning_font)
+            for line in warn_lines:
+                draw_text(line, icon_x + 14, wy, warning_font, warning_color)
+                wy += 13
 
         # ── Slot 2: Cost / Sells for — bottom-left ──
         if placed is not None:
