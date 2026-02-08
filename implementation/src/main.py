@@ -7,14 +7,7 @@ import sys
 _WEB = sys.platform == "emscripten"
 
 if _WEB:
-    # Async helper: wait for next requestAnimationFrame (vsync at ~60fps).
-    # Replaces asyncio.sleep(0) which runs unthrottled at ~375fps.
-    from pyodide.ffi import create_once_callable as _once  # type: ignore
-    from js import requestAnimationFrame as _raf            # type: ignore
-    async def _wait_frame():
-        fut = asyncio.get_event_loop().create_future()
-        _raf(_once(lambda _ts: fut.set_result(None)))
-        await fut
+    _FRAME_SLEEP = 1.0 / 60.0
 
 if not _WEB:
     from pathlib import Path
@@ -902,7 +895,7 @@ async def main() -> None:
 
             # Yield to browser event loop
             if _WEB:
-                await _wait_frame()  # vsync via requestAnimationFrame (~60fps)
+                await asyncio.sleep(_FRAME_SLEEP)
             else:
                 await asyncio.sleep(0)
     finally:
