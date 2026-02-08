@@ -869,6 +869,14 @@ class Simulation:
                 total += absorber_count * rate
         return total
 
+    def has_outlet_bottleneck(self) -> bool:
+        """True when total outlet throughput is lower than vent dissipation."""
+        return (
+            self.preview_vent_capacity > 0.0
+            and self.preview_outlet_capacity > 0.0
+            and self.preview_outlet_capacity + 1e-6 < self.preview_vent_capacity
+        )
+
     def refresh_live_preview(self) -> None:
         """Refresh derived stats/deltas without advancing simulation time.
 

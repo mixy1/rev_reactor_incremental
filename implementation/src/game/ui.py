@@ -27,15 +27,6 @@ from game.simulation import ReactorComponent, Simulation
 from game.upgrades import UpgradeManager, UpgradeType
 
 
-def _has_outlet_vent_bottleneck(sim: Simulation) -> bool:
-    """True when vent dissipation exceeds outlet transfer throughput."""
-    return (
-        sim.preview_vent_capacity > 0.0
-        and sim.preview_outlet_capacity > 0.0
-        and sim.preview_outlet_capacity + 1e-6 < sim.preview_vent_capacity
-    )
-
-
 @dataclass
 class Ui:
     heat_icon: Optional[Texture2D] = None
@@ -63,6 +54,16 @@ class Ui:
     store_tab_arcane_pressed: Optional[Texture2D] = None
     upgrade_sprites: Optional[dict] = None  # icon_path -> Texture2D
     save_dir: object = None  # Truthy to enable export/import buttons
+
+    @staticmethod
+    def draw_warning_badge(x: int, y: int, size: int = 12) -> None:
+        """Compact amber warning badge used for outlet bottleneck warnings."""
+        draw_rectangle(x + 1, y + 1, size, size, Color(18, 14, 8, 230))
+        draw_rectangle(x, y, size, size, Color(62, 46, 14, 235))
+        draw_rectangle_lines(x, y, size, size, Color(245, 200, 70, 255))
+        text_x = x + max(1, size // 2 - 2)
+        text_y = y + max(-1, (size - 10) // 2 - 1)
+        draw_text("!", text_x, text_y, 10, Color(255, 236, 150, 255))
 
     def draw(
         self,
@@ -193,13 +194,6 @@ class Ui:
         tx = bx + max(0, (btn_w - vent_text_w) // 2)
         ty = by + max(0, (btn_h - vent_font) // 2) - 1
         draw_text(label, tx, ty, vent_font, Color(240, 240, 240, 255))
-        if _has_outlet_vent_bottleneck(sim):
-            warn_w = 12
-            warn_h = 12
-            warn_x = bx + btn_w - warn_w - 6
-            warn_y = by + (btn_h - warn_h) // 2
-            draw_rectangle(warn_x, warn_y, warn_w, warn_h, Color(245, 200, 60, 255))
-            draw_text("!", warn_x + 3, warn_y - 1, 10, Color(40, 40, 30, 255))
 
         # Sell All Power / Scrounge button
         # RE: "Sell All Power: +{power} $ (+{autoSellRate} $ per tick)"
@@ -436,8 +430,8 @@ class Ui:
 
         # Throughput warning: outlets are the bottleneck relative to vent capacity.
         show_outlet_warning = (
-            comp.type_of_component in ("Outlet", "Vent")
-            and _has_outlet_vent_bottleneck(sim)
+            comp.type_of_component == "Outlet"
+            and sim.has_outlet_bottleneck()
         )
         if show_outlet_warning:
             outlet_cap = format_number_with_suffix(sim.preview_outlet_capacity, max_decimals=1)
@@ -449,8 +443,7 @@ class Ui:
             warning_color = Color(255, 220, 90, 255)
             icon_x = panel_x + margin
             icon_y = y + 2
-            draw_rectangle(icon_x, icon_y, 10, 10, Color(245, 200, 60, 255))
-            draw_text("!", icon_x + 3, icon_y - 1, 10, Color(40, 40, 30, 255))
+            self.draw_warning_badge(icon_x, icon_y, size=10)
 
             wy = y
             warn_lines = _wrap_text(warning_text, max(20, desc_max_w - 18), warning_font)
