@@ -292,8 +292,15 @@ globalThis.Renderer = (() => {
         }
     }
 
-    /** Returns a Promise that resolves on the next requestAnimationFrame. */
+    /** Returns a Promise that resolves on the next frame/tick.
+     * Visible tab: requestAnimationFrame (vsync).
+     * Hidden tab: setTimeout fallback so simulation can keep advancing.
+     */
     function waitFrame() {
+        if (document.hidden || document.visibilityState !== 'visible') {
+            // Hidden tabs throttle timers, but this still allows periodic ticks.
+            return new Promise(resolve => setTimeout(resolve, 50));
+        }
         return new Promise(resolve => requestAnimationFrame(resolve));
     }
 
