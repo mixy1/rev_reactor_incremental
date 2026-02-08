@@ -243,9 +243,13 @@ except Exception:
         }
     }
 
-    // Expose globally for the toggle button
-    globalThis.setTheme = setTheme;
-    globalThis.currentTheme = () => currentTheme;
+    // Wire up the toggle button
+    const themeBtn = document.getElementById('theme-toggle');
+    if (themeBtn) {
+        themeBtn.addEventListener('click', () => {
+            setTheme(currentTheme === 'candy' ? 'default' : 'candy');
+        });
+    }
 
     // Apply saved theme preference (non-blocking)
     if (currentTheme === 'candy') {
