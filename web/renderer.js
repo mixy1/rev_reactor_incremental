@@ -20,24 +20,28 @@ globalThis.Renderer = (() => {
     const ctx = canvas.getContext('2d');
     const logicalWidth = canvas.width;
     const logicalHeight = canvas.height;
-    let devicePixelRatio = 1;
+    let deviceScaleX = 1;
+    let deviceScaleY = 1;
 
     function configureCanvas() {
-        // Use the exact DPR so the browser doesn't resample a mismatched backing store.
         const dpr = Math.max(1, window.devicePixelRatio || 1);
         const targetW = Math.round(logicalWidth * dpr);
         const targetH = Math.round(logicalHeight * dpr);
-        if (canvas.width === targetW && canvas.height === targetH && dpr === devicePixelRatio) {
+        const scaleX = targetW / logicalWidth;
+        const scaleY = targetH / logicalHeight;
+        if (canvas.width === targetW && canvas.height === targetH &&
+            scaleX === deviceScaleX && scaleY === deviceScaleY) {
             return;
         }
 
-        devicePixelRatio = dpr;
+        deviceScaleX = scaleX;
+        deviceScaleY = scaleY;
         canvas.style.width = `${logicalWidth}px`;
         canvas.style.height = `${logicalHeight}px`;
         canvas.style.imageRendering = 'auto';
         canvas.width = targetW;
         canvas.height = targetH;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.setTransform(deviceScaleX, 0, 0, deviceScaleY, 0, 0);
         // Keep sprite scaling nearest-neighbor; improves crispness during scaled draws.
         ctx.imageSmoothingEnabled = false;
     }
@@ -120,7 +124,7 @@ globalThis.Renderer = (() => {
         const s = size | 0;
         let f = _fontCache.get(s);
         if (f === undefined) {
-            f = `500 ${s}px "JetBrains Mono", "Consolas", "Courier New", monospace`;
+            f = `400 ${s}px "JetBrains Mono", "Consolas", "Courier New", monospace`;
             _fontCache.set(s, f);
         }
         return f;
@@ -244,9 +248,8 @@ globalThis.Renderer = (() => {
                     ctx.fillStyle = rgba(r, g, b, a);
                     ctx.textBaseline = 'top';
                     ctx.textAlign = 'left';
-                    if ('textRendering' in ctx) ctx.textRendering = 'geometricPrecision';
-                    const sx = Math.round(x * devicePixelRatio) / devicePixelRatio;
-                    const sy = Math.round(y * devicePixelRatio) / devicePixelRatio;
+                    const sx = Math.round(x * deviceScaleX) / deviceScaleX;
+                    const sy = Math.round(y * deviceScaleY) / deviceScaleY;
                     ctx.fillText(strings[strIdx] || '', sx, sy);
                     break;
                 }
