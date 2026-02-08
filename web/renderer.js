@@ -19,35 +19,17 @@ globalThis.Renderer = (() => {
     const canvas = document.getElementById('game-canvas');
     const ctx = canvas.getContext('2d');
 
-    // DPR-scale game canvas so every logical pixel → crisp physical pixels
+    // DPR-scale canvas: internal resolution matches physical pixels,
+    // CSS size stays at logical 900x630.  imageSmoothingEnabled=false
+    // gives nearest-neighbor for sprites; text uses subpixel AA naturally.
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     canvas.width = Math.round(900 * dpr);
     canvas.height = Math.round(630 * dpr);
     canvas.style.width = '900px';
     canvas.style.height = '630px';
+    canvas.style.boxSizing = 'content-box';   // border must not eat into 900x630
     ctx.scale(dpr, dpr);
     ctx.imageSmoothingEnabled = false;
-
-    // Wrap canvas so the text overlay can be absolutely positioned over it
-    const wrapper = document.createElement('div');
-    wrapper.style.position = 'relative';
-    wrapper.style.display = 'inline-block';
-    canvas.parentNode.insertBefore(wrapper, canvas);
-    wrapper.appendChild(canvas);
-
-    // Text overlay canvas: DPR-scaled for smooth anti-aliased text
-    const textCanvas = document.createElement('canvas');
-    textCanvas.id = 'text-canvas';
-    textCanvas.width = Math.round(900 * dpr);
-    textCanvas.height = Math.round(630 * dpr);
-    textCanvas.style.cssText = `
-        position: absolute; top: 0; left: 0;
-        width: 100%; height: 100%;
-        pointer-events: none;
-    `;
-    wrapper.appendChild(textCanvas);
-    const tctx2 = textCanvas.getContext('2d');
-    tctx2.scale(dpr, dpr);
 
     // Texture registry: id -> { img, name }
     const textures = {};       // id -> Image
@@ -216,7 +198,6 @@ globalThis.Renderer = (() => {
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
                     ctx.fillStyle = rgba(r, g, b, a);
                     ctx.fillRect(0, 0, 900, 630);
-                    tctx2.clearRect(0, 0, 900, 630);
                     break;
                 }
                 case 1: { // FILL_RECT: x,y,w,h,r,g,b,a
@@ -240,15 +221,15 @@ globalThis.Renderer = (() => {
                     ctx.globalAlpha = prev;
                     break;
                 }
-                case 3: { // DRAW_TEXT: strIdx,x,y,size,r,g,b,a → text overlay canvas
+                case 3: { // DRAW_TEXT: strIdx,x,y,size,r,g,b,a
                     const strIdx = cmds[i++] | 0;
                     const x = cmds[i++], y = cmds[i++], size = cmds[i++];
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
-                    tctx2.font = getFont(size);
-                    tctx2.fillStyle = rgba(r, g, b, a);
-                    tctx2.textBaseline = 'top';
-                    tctx2.textAlign = 'left';
-                    tctx2.fillText(strings[strIdx] || '', x, y);
+                    ctx.font = getFont(size);
+                    ctx.fillStyle = rgba(r, g, b, a);
+                    ctx.textBaseline = 'top';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(strings[strIdx] || '', x, y);
                     break;
                 }
                 case 4: { // TEXTURE_PRO: texId,sx,sy,sw,sh,dx,dy,dw,dh,r,g,b,a
@@ -291,15 +272,10 @@ globalThis.Renderer = (() => {
                     ctx.beginPath();
                     ctx.rect(x, y, w, h);
                     ctx.clip();
-                    tctx2.save();
-                    tctx2.beginPath();
-                    tctx2.rect(x, y, w, h);
-                    tctx2.clip();
                     break;
                 }
                 case 7: { // END_SCISSOR
                     ctx.restore();
-                    tctx2.restore();
                     break;
                 }
                 default:
