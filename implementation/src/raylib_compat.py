@@ -295,10 +295,19 @@ else:
         _cmds.extend((OP_DRAW_TEXT, float(str_idx), float(x), float(y), float(size),
                        color[0], color[1], color[2], color[3]))
 
+    _measure_cache: dict[tuple, int] = {}
+
     def measure_text(text: str, size: int) -> int:
+        key = (text, size)
+        cached = _measure_cache.get(key)
+        if cached is not None:
+            return cached
         if _js_measure_text is not None:
-            return int(_js_measure_text(str(text), size))
-        return int(len(str(text)) * size * 0.6)
+            result = int(_js_measure_text(str(text), size))
+        else:
+            result = int(len(str(text)) * size * 0.6)
+        _measure_cache[key] = result
+        return result
 
     # ── Textures ─────────────────────────────────────────────────────
 

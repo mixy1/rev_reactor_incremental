@@ -94,27 +94,47 @@ globalThis.Input = (() => {
 
     // ── Poll interface ──────────────────────────────────────────────
 
+    // Pre-allocated arrays and state object — reused every frame
+    const _mdArr = [];
+    const _mpArr = [];
+    const _mrArr = [];
+    const _kpArr = [];
+    const _kdArr = [];
+    const _state = {
+        mouseX: 0, mouseY: 0,
+        mouseDown: _mdArr, mousePressed: _mpArr, mouseReleased: _mrArr,
+        wheelDelta: 0,
+        keysPressed: _kpArr, keysDown: _kdArr,
+        dt: 0,
+    };
+
+    function _copySetToArr(set, arr) {
+        arr.length = 0;
+        for (const v of set) arr.push(v);
+    }
+
     function pollInput() {
         const now = performance.now();
         const dt = Math.min((now - lastTime) / 1000, 0.1); // Cap at 100ms
         lastTime = now;
 
-        const state = {
-            mouseX,
-            mouseY,
-            mouseDown: Array.from(mouseDown),
-            mousePressed: Array.from(mousePressed),
-            mouseReleased: Array.from(mouseReleased),
-            wheelDelta,
-            keysPressed: Array.from(keysPressed),
-            keysDown: Array.from(keysDown),
-            dt,
-        };
+        _state.mouseX = mouseX;
+        _state.mouseY = mouseY;
+        _state.wheelDelta = wheelDelta;
+        _state.dt = dt;
+
+        _copySetToArr(mouseDown, _mdArr);
+        _copySetToArr(mousePressed, _mpArr);
+        _copySetToArr(mouseReleased, _mrArr);
+        _copySetToArr(keysPressed, _kpArr);
+        _copySetToArr(keysDown, _kdArr);
 
         // Include file import content only when present (avoids null/None proxy issues)
         if (pendingFileImport !== null) {
-            state.fileImport = pendingFileImport;
+            _state.fileImport = pendingFileImport;
             pendingFileImport = null;
+        } else {
+            delete _state.fileImport;
         }
 
         // Clear per-frame state
@@ -123,7 +143,7 @@ globalThis.Input = (() => {
         mouseReleased.clear();
         wheelDelta = 0;
 
-        return state;
+        return _state;
     }
 
     function setFileImport(content) {

@@ -31,18 +31,21 @@ globalThis.Renderer = (() => {
         _emModule = mod;
     }
 
-    // Temp canvas for color tinting
+    // Temp canvas for color tinting (object reused across calls)
     let _tintCanvas = null;
     let _tintCtx = null;
+    const _tintResult = { canvas: null, ctx: null };
 
     function getTintCanvas(w, h) {
         if (!_tintCanvas) {
             _tintCanvas = document.createElement('canvas');
             _tintCtx = _tintCanvas.getContext('2d');
+            _tintResult.canvas = _tintCanvas;
+            _tintResult.ctx = _tintCtx;
         }
         if (_tintCanvas.width < w) _tintCanvas.width = w;
         if (_tintCanvas.height < h) _tintCanvas.height = h;
-        return { canvas: _tintCanvas, ctx: _tintCtx };
+        return _tintResult;
     }
 
     function registerTexture(name, img) {
@@ -62,12 +65,43 @@ globalThis.Renderer = (() => {
         };
     }
 
+    // String caches — avoid per-frame template literal allocations
+    const _rgbaCache = new Map();
+    const _rgbCache = new Map();
+    const _fontCache = new Map();
+
     function rgba(r, g, b, a) {
-        return `rgba(${r|0},${g|0},${b|0},${(a/255).toFixed(3)})`;
+        const key = ((r|0) << 24) | ((g|0) << 16) | ((b|0) << 8) | (a|0);
+        let s = _rgbaCache.get(key);
+        if (s === undefined) {
+            s = `rgba(${r|0},${g|0},${b|0},${(a/255).toFixed(3)})`;
+            _rgbaCache.set(key, s);
+        }
+        return s;
+    }
+
+    function rgb(r, g, b) {
+        const key = ((r|0) << 16) | ((g|0) << 8) | (b|0);
+        let s = _rgbCache.get(key);
+        if (s === undefined) {
+            s = `rgb(${r|0},${g|0},${b|0})`;
+            _rgbCache.set(key, s);
+        }
+        return s;
+    }
+
+    function getFont(size) {
+        const s = size | 0;
+        let f = _fontCache.get(s);
+        if (f === undefined) {
+            f = `${s}px monospace`;
+            _fontCache.set(s, f);
+        }
+        return f;
     }
 
     function measureTextWidth(text, size) {
-        ctx.font = `${size}px monospace`;
+        ctx.font = getFont(size);
         return ctx.measureText(text).width;
     }
 
@@ -115,7 +149,7 @@ globalThis.Renderer = (() => {
 
         // Multiply with tint color
         tctx.globalCompositeOperation = 'multiply';
-        tctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+        tctx.fillStyle = rgb(r, g, b);
         tctx.fillRect(0, 0, tw, th);
 
         // Restore alpha from original
@@ -158,7 +192,7 @@ globalThis.Renderer = (() => {
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
                     const prev = ctx.globalAlpha;
                     ctx.globalAlpha = a / 255;
-                    ctx.fillStyle = `rgb(${r|0},${g|0},${b|0})`;
+                    ctx.fillStyle = rgb(r, g, b);
                     ctx.fillRect(x, y, w, h);
                     ctx.globalAlpha = prev;
                     break;
@@ -168,7 +202,7 @@ globalThis.Renderer = (() => {
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
                     const prev = ctx.globalAlpha;
                     ctx.globalAlpha = a / 255;
-                    ctx.strokeStyle = `rgb(${r|0},${g|0},${b|0})`;
+                    ctx.strokeStyle = rgb(r, g, b);
                     ctx.lineWidth = 1;
                     ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
                     ctx.globalAlpha = prev;
@@ -178,7 +212,7 @@ globalThis.Renderer = (() => {
                     const strIdx = cmds[i++] | 0;
                     const x = cmds[i++], y = cmds[i++], size = cmds[i++];
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
-                    ctx.font = `${size}px monospace`;
+                    ctx.font = getFont(size);
                     ctx.fillStyle = rgba(r, g, b, a);
                     ctx.textBaseline = 'top';
                     ctx.fillText(strings[strIdx] || '', x, y);
