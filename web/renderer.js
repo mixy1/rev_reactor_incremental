@@ -19,24 +19,33 @@ globalThis.Renderer = (() => {
     const canvas = document.getElementById('game-canvas');
     const ctx = canvas.getContext('2d');
 
-    // Game canvas: 900x630, pixelated CSS scaling for crisp sprites
-    canvas.width = 900;
-    canvas.height = 630;
+    // DPR-scale game canvas so every logical pixel → crisp physical pixels
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.round(900 * dpr);
+    canvas.height = Math.round(630 * dpr);
+    canvas.style.width = '900px';
+    canvas.style.height = '630px';
+    ctx.scale(dpr, dpr);
     ctx.imageSmoothingEnabled = false;
 
+    // Wrap canvas so the text overlay can be absolutely positioned over it
+    const wrapper = document.createElement('div');
+    wrapper.style.position = 'relative';
+    wrapper.style.display = 'inline-block';
+    canvas.parentNode.insertBefore(wrapper, canvas);
+    wrapper.appendChild(canvas);
+
     // Text overlay canvas: DPR-scaled for smooth anti-aliased text
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
     const textCanvas = document.createElement('canvas');
     textCanvas.id = 'text-canvas';
     textCanvas.width = Math.round(900 * dpr);
     textCanvas.height = Math.round(630 * dpr);
     textCanvas.style.cssText = `
         position: absolute; top: 0; left: 0;
-        width: ${canvas.offsetWidth}px; height: ${canvas.offsetHeight}px;
+        width: 100%; height: 100%;
         pointer-events: none;
     `;
-    canvas.parentNode.style.position = 'relative';
-    canvas.parentNode.insertBefore(textCanvas, canvas.nextSibling);
+    wrapper.appendChild(textCanvas);
     const tctx2 = textCanvas.getContext('2d');
     tctx2.scale(dpr, dpr);
 
@@ -206,7 +215,7 @@ globalThis.Renderer = (() => {
                 case 0: { // CLEAR_BG: r,g,b,a
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
                     ctx.fillStyle = rgba(r, g, b, a);
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillRect(0, 0, 900, 630);
                     tctx2.clearRect(0, 0, 900, 630);
                     break;
                 }
