@@ -224,9 +224,7 @@ globalThis.Renderer = (() => {
                     ctx.fillStyle = rgba(r, g, b, a);
                     ctx.textBaseline = 'top';
                     ctx.textAlign = 'left';
-                    const sx = Math.round(x * deviceScaleX) / deviceScaleX;
-                    const sy = Math.round(y * deviceScaleY) / deviceScaleY;
-                    ctx.fillText(strings[strIdx] || '', sx, sy);
+                    ctx.fillText(strings[strIdx] || '', x | 0, y | 0);
                     break;
                 }
                 case 4: { // TEXTURE_PRO: texId,sx,sy,sw,sh,dx,dy,dw,dh,r,g,b,a
