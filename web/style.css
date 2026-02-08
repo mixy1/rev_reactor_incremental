@@ -178,6 +178,13 @@ main {
     color: var(--azure);
 }
 
+.inline-mixy-gif {
+    height: 1.05rem;
+    width: auto;
+    vertical-align: text-bottom;
+    border-radius: 3px;
+}
+
 /* ── Loading screen ─────────────────────────────────────── */
 
 #loading {

@@ -68,3 +68,5 @@
 2026-02-08	Fix decayed sprite alpha holes and darken unpurchasable items
 2026-02-08	Preserve drag build/sell across canvas exit
 2026-02-08	Add changelog.txt as source of truth and render site changelog from it
+2026-02-08	Add explicit in-game attribution to cael and reimplementation credit
+2026-02-08	Inline changelog parser to avoid external script MIME issues
