@@ -133,8 +133,6 @@ main {
 
 #game-canvas {
     display: block;
-    image-rendering: pixelated;
-    image-rendering: crisp-edges;
     border: 1px solid var(--border);
 }
 

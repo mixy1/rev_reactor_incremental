@@ -23,7 +23,9 @@ globalThis.Renderer = (() => {
     let devicePixelRatio = 1;
 
     function configureCanvas() {
-        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const rawDpr = Math.max(1, window.devicePixelRatio || 1);
+        // Integer DPR avoids fractional backing scales (eg 1.25) that can blur text.
+        const dpr = Math.min(3, Math.max(1, Math.ceil(rawDpr)));
         const targetW = Math.round(logicalWidth * dpr);
         const targetH = Math.round(logicalHeight * dpr);
         if (canvas.width === targetW && canvas.height === targetH && dpr === devicePixelRatio) {
@@ -33,6 +35,7 @@ globalThis.Renderer = (() => {
         devicePixelRatio = dpr;
         canvas.style.width = `${logicalWidth}px`;
         canvas.style.height = `${logicalHeight}px`;
+        canvas.style.imageRendering = 'auto';
         canvas.width = targetW;
         canvas.height = targetH;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -118,7 +121,7 @@ globalThis.Renderer = (() => {
         const s = size | 0;
         let f = _fontCache.get(s);
         if (f === undefined) {
-            f = `${s}px "JetBrains Mono", "Consolas", "Courier New", monospace`;
+            f = `500 ${s}px "JetBrains Mono", "Consolas", "Courier New", monospace`;
             _fontCache.set(s, f);
         }
         return f;
@@ -241,6 +244,8 @@ globalThis.Renderer = (() => {
                     ctx.font = getFont(size);
                     ctx.fillStyle = rgba(r, g, b, a);
                     ctx.textBaseline = 'top';
+                    ctx.textAlign = 'left';
+                    if ('textRendering' in ctx) ctx.textRendering = 'geometricPrecision';
                     ctx.fillText(strings[strIdx] || '', Math.round(x), Math.round(y));
                     break;
                 }
