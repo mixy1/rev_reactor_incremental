@@ -24,6 +24,13 @@ globalThis.Renderer = (() => {
     const texturesByName = {}; // name -> { id, img }
     let nextId = 1;
 
+    // WASM memory reference for zero-copy command buffer reads
+    let _wasmMemory = null;
+
+    function setWasmMemory(mem) {
+        _wasmMemory = mem;
+    }
+
     // Temp canvas for color tinting
     let _tintCanvas = null;
     let _tintCtx = null;
@@ -124,10 +131,14 @@ globalThis.Renderer = (() => {
 
     /**
      * Main entry point: process the command buffer.
-     * @param {Float64Array} cmds - Command array from Python
+     * @param {number} byteOffset - Byte offset into WASM linear memory
+     * @param {number} count - Number of float64 elements in the command buffer
      * @param {Array<string>} strings - String table for text commands
      */
-    function renderBatch(cmds, strings) {
+    function renderBatch(byteOffset, count, strings) {
+        // Create a Float64Array VIEW into WASM memory — no ArrayBuffer allocation.
+        // Must read .buffer each call since memory.grow() detaches the old buffer.
+        const cmds = new Float64Array(_wasmMemory.buffer, byteOffset, count);
         const len = cmds.length;
         let i = 0;
 
@@ -232,6 +243,7 @@ globalThis.Renderer = (() => {
         getTextureInfo,
         measureTextWidth,
         renderBatch,
+        setWasmMemory,
         textures,
     };
 })();

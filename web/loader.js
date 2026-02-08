@@ -130,6 +130,9 @@
 
     // ── 4. Set up JS bridge and start game ──────────────────────────
 
+    // Pass WASM memory to renderer for zero-copy command buffer reads
+    Renderer.setWasmMemory(pyodide._module.wasmMemory);
+
     // Add src to Python path
     pyodide.runPython(`
 import sys
