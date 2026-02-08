@@ -288,6 +288,7 @@ async def main() -> None:
                 break
 
             dt = get_frame_time()
+            view_mode_before_input = sim.view_mode
 
             # Check for pending file import (queued by JS file input)
             if _WEB:
@@ -449,7 +450,13 @@ async def main() -> None:
                 sim.reset_confirm_timer = 0.0
 
             # ── Grid: Left click — place / replace (reactor view only) ──
-            if sim.view_mode == "reactor" and sim.grid is not None and is_mouse_button_down(MOUSE_BUTTON_LEFT) and not scrollbar_consumed:
+            if (
+                view_mode_before_input == "reactor"
+                and sim.view_mode == "reactor"
+                and sim.grid is not None
+                and is_mouse_button_down(MOUSE_BUTTON_LEFT)
+                and not scrollbar_consumed
+            ):
                 if 0 <= mx < layout.window_width and 0 <= my < layout.window_height:
                     cell = sim.grid.screen_to_cell(int(mx), int(my))
                 else:
@@ -480,7 +487,12 @@ async def main() -> None:
             #   1. Mouse NOT over grid cell + RMB down → deselect (line 388001)
             #   2. Mouse over empty grid cell + RMB down → deselect (line 388094)
             #   Mouse over occupied grid cell + RMB held → sell (line 388084)
-            if sim.view_mode == "reactor" and sim.grid is not None and is_mouse_button_down(MOUSE_BUTTON_RIGHT):
+            if (
+                view_mode_before_input == "reactor"
+                and sim.view_mode == "reactor"
+                and sim.grid is not None
+                and is_mouse_button_down(MOUSE_BUTTON_RIGHT)
+            ):
                 if 0 <= mx < layout.window_width and 0 <= my < layout.window_height:
                     cell = sim.grid.screen_to_cell(int(mx), int(my))
                 else:
