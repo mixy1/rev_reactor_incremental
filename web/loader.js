@@ -130,8 +130,9 @@
 
     // ── 4. Set up JS bridge and start game ──────────────────────────
 
-    // Pass WASM memory to renderer for zero-copy command buffer reads
-    Renderer.setWasmMemory(pyodide._module.wasmMemory);
+    // Pass Emscripten Module to renderer for zero-copy command buffer reads
+    // (HEAPF64 gives a Float64Array view into WASM linear memory)
+    Renderer.setWasmMemory(pyodide._module);
 
     // Add src to Python path
     pyodide.runPython(`

@@ -24,11 +24,11 @@ globalThis.Renderer = (() => {
     const texturesByName = {}; // name -> { id, img }
     let nextId = 1;
 
-    // WASM memory reference for zero-copy command buffer reads
-    let _wasmMemory = null;
+    // Emscripten Module reference for zero-copy command buffer reads
+    let _emModule = null;
 
-    function setWasmMemory(mem) {
-        _wasmMemory = mem;
+    function setWasmMemory(mod) {
+        _emModule = mod;
     }
 
     // Temp canvas for color tinting
@@ -136,9 +136,10 @@ globalThis.Renderer = (() => {
      * @param {Array<string>} strings - String table for text commands
      */
     function renderBatch(byteOffset, count, strings) {
-        // Create a Float64Array VIEW into WASM memory — no ArrayBuffer allocation.
-        // Must read .buffer each call since memory.grow() detaches the old buffer.
-        const cmds = new Float64Array(_wasmMemory.buffer, byteOffset, count);
+        // Zero-copy: subarray() creates a Float64Array view, no ArrayBuffer allocation.
+        // HEAPF64 is always current — Emscripten updates it after memory.grow().
+        const elemOffset = byteOffset / 8;
+        const cmds = _emModule.HEAPF64.subarray(elemOffset, elemOffset + count);
         const len = cmds.length;
         let i = 0;
 
