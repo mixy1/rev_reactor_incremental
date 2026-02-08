@@ -115,11 +115,11 @@ globalThis.Input = (() => {
 
     function pollInput() {
         const now = performance.now();
+        const hidden = document.hidden || document.visibilityState !== 'visible';
         const rawDt = (now - lastTime) / 1000;
-        // Foreground: keep old tight cap to avoid giant catch-up after hiccups.
-        // Background: allow larger dt so hidden-tab timers still progress sim.
-        const dtCap = (document.hidden || document.visibilityState !== 'visible') ? 5.0 : 0.1;
-        const dt = Math.min(rawDt, dtCap);
+        // Foreground: cap to avoid giant catch-up after hitches.
+        // Background: fixed step so hidden-time does not turn into big burst dt.
+        const dt = hidden ? 0.05 : Math.min(rawDt, 0.1);
         lastTime = now;
 
         _state.mouseX = mouseX;
