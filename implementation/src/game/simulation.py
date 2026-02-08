@@ -849,32 +849,34 @@ class Simulation:
 
     def outlet_transfer_capacity_per_tick(self) -> float:
         """Maximum per-tick reactor->component transfer capacity from outlets."""
-        if self.grid is None:
-            return 0.0
         total = 0.0
         for comp in self.components:
-            if comp.depleted or comp.stats.reactor_vent_rate <= 0:
-                continue
-            if comp.stats.type_of_component != "Outlet":
-                continue
-            rate = comp.stats.reactor_vent_rate * self._stat_mult(
-                comp.stats.component_type_id, StatCategory.REACTOR_TRANSFER_RATE
-            ) * self.heat_exchange_mult
-            absorber_count = 0
-            for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
-                ncomp = self.grid.get(nx, ny, nz)
-                if ncomp is not None and ncomp.stats.heat_capacity > 0:
-                    absorber_count += 1
-            if absorber_count > 0:
-                total += absorber_count * rate
+            total += self.outlet_transfer_capacity_for(comp)
         return total
 
-    def has_outlet_bottleneck(self) -> bool:
-        """True when total outlet throughput is lower than vent dissipation."""
+    def outlet_transfer_capacity_for(self, comp: ReactorComponent) -> float:
+        """Per-tick transfer capacity contributed by one outlet component."""
+        if self.grid is None:
+            return 0.0
+        if comp.depleted or comp.stats.reactor_vent_rate <= 0:
+            return 0.0
+        if comp.stats.type_of_component != "Outlet":
+            return 0.0
+        rate = comp.stats.reactor_vent_rate * self._stat_mult(
+            comp.stats.component_type_id, StatCategory.REACTOR_TRANSFER_RATE
+        ) * self.heat_exchange_mult
+        absorber_count = 0
+        for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
+            ncomp = self.grid.get(nx, ny, nz)
+            if ncomp is not None and ncomp.stats.heat_capacity > 0:
+                absorber_count += 1
+        return absorber_count * rate
+
+    def is_outlet_bottleneck(self, comp: ReactorComponent) -> bool:
+        """True when this outlet's throughput is lower than total vent capacity."""
         return (
             self.preview_vent_capacity > 0.0
-            and self.preview_outlet_capacity > 0.0
-            and self.preview_outlet_capacity + 1e-6 < self.preview_vent_capacity
+            and self.outlet_transfer_capacity_for(comp) + 1e-6 < self.preview_vent_capacity
         )
 
     def refresh_live_preview(self) -> None:

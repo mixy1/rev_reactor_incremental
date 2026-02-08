@@ -430,14 +430,15 @@ class Ui:
 
         # Throughput warning: outlets are the bottleneck relative to vent capacity.
         show_outlet_warning = (
-            comp.type_of_component == "Outlet"
-            and sim.has_outlet_bottleneck()
+            placed is not None
+            and comp.type_of_component == "Outlet"
+            and sim.is_outlet_bottleneck(placed)
         )
         if show_outlet_warning:
-            outlet_cap = format_number_with_suffix(sim.preview_outlet_capacity, max_decimals=1)
+            outlet_cap = format_number_with_suffix(sim.outlet_transfer_capacity_for(placed), max_decimals=1)
             vent_cap = format_number_with_suffix(sim.preview_vent_capacity, max_decimals=1)
             warning_text = (
-                f"Warning icon: outlets move {outlet_cap}/t, but vents can dissipate {vent_cap}/t."
+                f"Warning icon: this outlet moves {outlet_cap}/t, but vents can dissipate {vent_cap}/t."
             )
             warning_font = 11
             warning_color = Color(255, 220, 90, 255)

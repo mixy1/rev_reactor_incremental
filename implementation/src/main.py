@@ -563,7 +563,6 @@ async def main() -> None:
                     bar_h = max(2, cell_sz // 10)
                     bar_margin = 2
                     bar_w = cell_sz - bar_margin * 2
-                    show_outlet_warning_badge = sim.has_outlet_bottleneck()
 
                     for gx, gy, _gz, component in sim.grid.iter_cells():
                         if component is None:
@@ -592,9 +591,9 @@ async def main() -> None:
                             tint,
                         )
                         if (
-                            show_outlet_warning_badge
-                            and not component.depleted
+                            not component.depleted
                             and component.stats.type_of_component == "Outlet"
+                            and sim.is_outlet_bottleneck(component)
                         ):
                             badge_size = max(9, min(13, cell_sz // 3))
                             badge_x = int(px + cell_sz - badge_size - 2)
