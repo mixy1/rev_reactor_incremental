@@ -23,9 +23,8 @@ globalThis.Renderer = (() => {
     let devicePixelRatio = 1;
 
     function configureCanvas() {
-        const rawDpr = Math.max(1, window.devicePixelRatio || 1);
-        // Integer DPR avoids fractional backing scales (eg 1.25) that can blur text.
-        const dpr = Math.min(3, Math.max(1, Math.ceil(rawDpr)));
+        // Use the exact DPR so the browser doesn't resample a mismatched backing store.
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
         const targetW = Math.round(logicalWidth * dpr);
         const targetH = Math.round(logicalHeight * dpr);
         if (canvas.width === targetW && canvas.height === targetH && dpr === devicePixelRatio) {
@@ -246,7 +245,9 @@ globalThis.Renderer = (() => {
                     ctx.textBaseline = 'top';
                     ctx.textAlign = 'left';
                     if ('textRendering' in ctx) ctx.textRendering = 'geometricPrecision';
-                    ctx.fillText(strings[strIdx] || '', Math.round(x), Math.round(y));
+                    const sx = Math.round(x * devicePixelRatio) / devicePixelRatio;
+                    const sy = Math.round(y * devicePixelRatio) / devicePixelRatio;
+                    ctx.fillText(strings[strIdx] || '', sx, sy);
                     break;
                 }
                 case 4: { // TEXTURE_PRO: texId,sx,sy,sw,sh,dx,dy,dw,dh,r,g,b,a
