@@ -158,9 +158,9 @@ class Ui:
         )
 
         # Vent Heat button (RE: "-{ventAmount} Heat (-{ventRate} per tick)")
-        vent_amt = format_number_with_suffix(sim.manual_vent_amount)
-        vent_rate = format_number_with_suffix(sim.auto_vent_rate_per_tick())
-        label = f"-{vent_amt} Heat (-{vent_rate} per tick)"
+        vent_amt = format_number_with_suffix(sim.manual_vent_amount, max_decimals=1)
+        vent_rate = format_number_with_suffix(sim.auto_vent_rate_per_tick(), max_decimals=1)
+        label = f"-{vent_amt} Heat (-{vent_rate}/t)"
         bx, by = layout.vent_x, layout.vent_y
         tex = self.button_base
         if pressed_vent and self.button_pressed is not None:
@@ -170,15 +170,18 @@ class Ui:
 
         if tex is not None:
             draw_texture_ex(tex, Vector2(bx, by), 0.0, 1.0, Color(255, 255, 255, 255))
-            tx = bx + 10
-            ty = by + int(tex.height / 2) - 8
+            btn_w = tex.width
+            btn_h = tex.height
             btn_text_w = tex.width - 20
         else:
-            draw_rectangle(bx, by, 220, 28, Color(60, 60, 70, 255))
-            tx = bx + 8
-            ty = by + 6
+            btn_w = 220
+            btn_h = 28
+            draw_rectangle(bx, by, btn_w, btn_h, Color(60, 60, 70, 255))
             btn_text_w = 204
-        vent_font = _fit_font_size(label, btn_text_w, 14)
+        vent_font = _fit_font_size(label, btn_text_w, 14, min_size=9)
+        vent_text_w = _measure(label, vent_font)
+        tx = bx + max(0, (btn_w - vent_text_w) // 2)
+        ty = by + max(0, (btn_h - vent_font) // 2) - 1
         draw_text(label, tx, ty, vent_font, Color(240, 240, 240, 255))
 
         # Sell All Power / Scrounge button
@@ -187,9 +190,9 @@ class Ui:
         if sim.can_scrounge():
             label = "Scrounge for cash (+1$)"
         else:
-            power_str = format_number_with_suffix(sim.stored_power)
-            rate_str = format_number_with_suffix(sim.auto_sell_rate_per_tick())
-            label = f"Sell All Power: +{power_str} $ (+{rate_str} $ per tick)"
+            power_str = format_number_with_suffix(sim.stored_power, max_decimals=1)
+            rate_str = format_number_with_suffix(sim.auto_sell_rate_per_tick(), max_decimals=1)
+            label = f"Sell Power:+{power_str}$ (+{rate_str}$/t)"
         bx, by = layout.sell_x, layout.sell_y
         tex = self.button_base
         if pressed_sell and self.button_pressed is not None:
@@ -199,15 +202,18 @@ class Ui:
 
         if tex is not None:
             draw_texture_ex(tex, Vector2(bx, by), 0.0, 1.0, Color(255, 255, 255, 255))
-            tx = bx + 10
-            ty = by + int(tex.height / 2) - 8
+            btn_w = tex.width
+            btn_h = tex.height
             btn_text_w = tex.width - 20
         else:
-            draw_rectangle(bx, by, 320, 28, Color(60, 60, 70, 255))
-            tx = bx + 8
-            ty = by + 6
+            btn_w = 320
+            btn_h = 28
+            draw_rectangle(bx, by, btn_w, btn_h, Color(60, 60, 70, 255))
             btn_text_w = 304
-        sell_font = _fit_font_size(label, btn_text_w, 14)
+        sell_font = _fit_font_size(label, btn_text_w, 14, min_size=9)
+        sell_text_w = _measure(label, sell_font)
+        tx = bx + max(0, (btn_w - sell_text_w) // 2)
+        ty = by + max(0, (btn_h - sell_font) // 2) - 1
         draw_text(label, tx, ty, sell_font, Color(240, 240, 240, 255))
 
         # Stats panel is hidden until we wire the real stats page UI.
@@ -644,8 +650,8 @@ class Ui:
         content_y = layout.upgrade_grid_y + 4
         content_w = panel_w - (content_x - panel_x) * 2
         font_title = 14
-        font_sm = 12
-        line_h = 16
+        font_sm = 11
+        line_h = 14
 
         # Title
         title = "Statistics:"
@@ -679,9 +685,12 @@ class Ui:
             if line == "":
                 y += line_h // 2
                 continue
-            lw = _measure(line, font_sm)
-            draw_text(line, content_x + (content_w - lw) // 2, y, font_sm, text_color)
-            y += line_h
+            line_font = _fit_font_size(line, content_w - 8, font_sm, min_size=9)
+            wrapped = _wrap_text(line, content_w - 8, line_font)
+            for wline in wrapped:
+                lw = _measure(wline, line_font)
+                draw_text(wline, content_x + (content_w - lw) // 2, y, line_font, text_color)
+                y += line_h
 
     def draw_options_panel(
         self,
@@ -1100,7 +1109,9 @@ def _format_sell_line(placed: ReactorComponent) -> str:
 
 
 
-def format_number_with_suffix(value: float) -> str:
+def format_number_with_suffix(value: float, max_decimals: int = 2) -> str:
+    if not math.isfinite(value):
+        return "0"
     if value == 0.0:
         return "0"
 
@@ -1133,35 +1144,29 @@ def format_number_with_suffix(value: float) -> str:
     if abs_val == 0.0:
         return "0"
 
-    exp = int(math.floor(math.log10(abs_val)))
-    if exp < -2:
+    if abs_val < 1000.0:
         group = 0
     else:
-        group = int(exp / 3)
-        if group < 0:
-            group = 0
+        exp = int(math.floor(math.log10(abs_val)))
+        group = max(0, int(exp / 3))
 
+    group = min(group, len(suffixes) - 1)
     scale = 10 ** (group * 3)
     scaled = value / scale
-    int_part = int(scaled)
+    if group < len(suffixes) - 1 and abs(scaled) >= 999.5:
+        group += 1
+        scale *= 1000
+        scaled = value / scale
+    clamped_max = max(0, min(4, max_decimals))
+    mag = abs(scaled)
+    if mag >= 100:
+        decimals = 0
+    elif mag >= 10:
+        decimals = min(1, clamped_max)
+    else:
+        decimals = clamped_max
 
-    out = ""
-    if value < 0.0 and int_part >= 0:
-        out += "-"
-    out += str(int_part)
-
-    frac = abs((scaled - int_part) * 1000.0)
-    frac_int = int(frac)
-    if frac_int >= 1:
-        out += "."
-        if frac_int < 10:
-            out += "00"
-        elif frac_int < 100:
-            out += "0"
-        out += str(frac_int)
-        out = out.rstrip("0,")
-
-    if group >= len(suffixes):
-        group = len(suffixes) - 1
-    out += suffixes[group]
-    return out
+    out = f"{scaled:.{decimals}f}"
+    if "." in out:
+        out = out.rstrip("0").rstrip(".")
+    return f"{out}{suffixes[group]}"
