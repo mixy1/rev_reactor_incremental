@@ -7,7 +7,8 @@ import sys
 _WEB = sys.platform == "emscripten"
 
 if _WEB:
-    _FRAME_SLEEP = 1.0 / 60.0
+    from js import Renderer as _Renderer  # type: ignore
+    _wait_frame = _Renderer.waitFrame  # Returns a JS Promise; Pyodide awaits it natively
 
 if not _WEB:
     from pathlib import Path
@@ -895,7 +896,7 @@ async def main() -> None:
 
             # Yield to browser event loop
             if _WEB:
-                await asyncio.sleep(_FRAME_SLEEP)
+                await _wait_frame()  # vsync via requestAnimationFrame Promise
             else:
                 await asyncio.sleep(0)
     finally:

@@ -271,6 +271,11 @@ globalThis.Renderer = (() => {
         }
     }
 
+    /** Returns a Promise that resolves on the next requestAnimationFrame. */
+    function waitFrame() {
+        return new Promise(resolve => requestAnimationFrame(resolve));
+    }
+
     return {
         canvas,
         ctx,
@@ -279,6 +284,7 @@ globalThis.Renderer = (() => {
         measureTextWidth,
         renderBatch,
         setWasmMemory,
+        waitFrame,
         textures,
     };
 })();
