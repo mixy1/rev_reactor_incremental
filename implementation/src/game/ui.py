@@ -436,9 +436,9 @@ class Ui:
         )
         if show_outlet_warning:
             outlet_cap = format_number_with_suffix(sim.outlet_transfer_capacity_for(placed), max_decimals=1)
-            vent_cap = format_number_with_suffix(sim.preview_vent_capacity, max_decimals=1)
+            vent_cap = format_number_with_suffix(sim.max_adjacent_vent_capacity_for(placed), max_decimals=1)
             warning_text = (
-                f"Warning icon: this outlet moves {outlet_cap}/t, but vents can dissipate {vent_cap}/t."
+                f"Warning icon: this outlet moves {outlet_cap}/t, but an adjacent vent can dissipate {vent_cap}/t."
             )
             warning_font = 11
             warning_color = Color(255, 220, 90, 255)

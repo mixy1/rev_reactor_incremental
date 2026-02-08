@@ -847,6 +847,15 @@ class Simulation:
             total += comp.stats.self_vent_rate * vent_bonus * self.self_vent_mult
         return total
 
+    def vent_dissipation_capacity_for(self, comp: ReactorComponent) -> float:
+        """Per-tick heat dissipation for a single placed Vent component."""
+        if comp.depleted or comp.stats.self_vent_rate <= 0:
+            return 0.0
+        if comp.stats.type_of_component != "Vent":
+            return 0.0
+        vent_bonus = self._stat_mult(comp.stats.component_type_id, StatCategory.SELF_VENT_RATE)
+        return comp.stats.self_vent_rate * vent_bonus * self.self_vent_mult
+
     def outlet_transfer_capacity_per_tick(self) -> float:
         """Maximum per-tick reactor->component transfer capacity from outlets."""
         total = 0.0
@@ -872,12 +881,28 @@ class Simulation:
                 absorber_count += 1
         return absorber_count * rate
 
+    def max_adjacent_vent_capacity_for(self, comp: ReactorComponent) -> float:
+        """Largest per-tick dissipation among this outlet's adjacent vents."""
+        if self.grid is None:
+            return 0.0
+        if comp.depleted or comp.stats.type_of_component != "Outlet":
+            return 0.0
+        max_cap = 0.0
+        for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
+            ncomp = self.grid.get(nx, ny, nz)
+            if ncomp is None:
+                continue
+            vent_cap = self.vent_dissipation_capacity_for(ncomp)
+            if vent_cap > max_cap:
+                max_cap = vent_cap
+        return max_cap
+
     def is_outlet_bottleneck(self, comp: ReactorComponent) -> bool:
-        """True when this outlet's throughput is lower than total vent capacity."""
-        return (
-            self.preview_vent_capacity > 0.0
-            and self.outlet_transfer_capacity_for(comp) + 1e-6 < self.preview_vent_capacity
-        )
+        """True when an adjacent vent can dissipate more than this outlet outputs."""
+        outlet_cap = self.outlet_transfer_capacity_for(comp)
+        if outlet_cap <= 0.0:
+            return False
+        return self.max_adjacent_vent_capacity_for(comp) > outlet_cap + 1e-6
 
     def refresh_live_preview(self) -> None:
         """Refresh derived stats/deltas without advancing simulation time.
