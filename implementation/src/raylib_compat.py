@@ -264,11 +264,9 @@ else:
 
     def end_drawing() -> None:
         if _js_render_batch is not None:
-            js_cmds = _to_js(_cmds)
+            addr, count = _cmds.buffer_info()
             js_strings = _to_js(_strings)
-            _js_render_batch(js_cmds, js_strings)
-            if hasattr(js_cmds, 'destroy'):
-                js_cmds.destroy()
+            _js_render_batch(addr, count, js_strings)
             if hasattr(js_strings, 'destroy'):
                 js_strings.destroy()
 

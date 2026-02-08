@@ -130,6 +130,9 @@
 
     // ── 4. Set up JS bridge and start game ──────────────────────────
 
+    // Pass Emscripten Module to renderer for zero-copy command buffer reads
+    Renderer.setWasmMemory(pyodide._module);
+
     // Add src to Python path
     pyodide.runPython(`
 import sys

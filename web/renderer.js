@@ -24,6 +24,13 @@ globalThis.Renderer = (() => {
     const texturesByName = {}; // name -> { id, img }
     let nextId = 1;
 
+    // Emscripten Module reference for zero-copy command buffer reads
+    let _emModule = null;
+
+    function setWasmMemory(mod) {
+        _emModule = mod;
+    }
+
     // Temp canvas for color tinting (object reused across calls)
     let _tintCanvas = null;
     let _tintCtx = null;
@@ -158,10 +165,13 @@ globalThis.Renderer = (() => {
 
     /**
      * Main entry point: process the command buffer.
-     * @param {Float64Array} cmds - Command array from Python via to_js()
+     * @param {number} byteOffset - Byte offset into WASM linear memory
+     * @param {number} count - Number of float64 elements in the command buffer
      * @param {Array<string>} strings - String table for text commands
      */
-    function renderBatch(cmds, strings) {
+    function renderBatch(byteOffset, count, strings) {
+        const elemOffset = byteOffset / 8;
+        const cmds = _emModule.HEAPF64.subarray(elemOffset, elemOffset + count);
         const len = cmds.length;
         let i = 0;
 
@@ -271,6 +281,7 @@ globalThis.Renderer = (() => {
         getTextureInfo,
         measureTextWidth,
         renderBatch,
+        setWasmMemory,
         waitFrame,
         textures,
     };
