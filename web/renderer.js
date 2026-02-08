@@ -192,7 +192,7 @@ globalThis.Renderer = (() => {
                 case 0: { // CLEAR_BG: r,g,b,a
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
                     ctx.fillStyle = rgba(r, g, b, a);
-                    ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
                     break;
                 }
                 case 1: { // FILL_RECT: x,y,w,h,r,g,b,a
