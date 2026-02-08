@@ -186,6 +186,7 @@ class Simulation:
 
     def _do_tick(self) -> None:
         """Execute one simulation tick following the decoded pipeline."""
+        self.reactor_heat = max(0.0, self.reactor_heat)
         self.last_heat_change = 0.0
         self.last_power_change = 0.0
         self.total_ticks += 1
@@ -280,6 +281,7 @@ class Simulation:
                             comp.heat = eff_cap
 
         # Clamp power only (heat is NOT clamped — can exceed for explosion mechanic)
+        self.reactor_heat = max(0.0, self.reactor_heat)
         self.stored_power = min(self.stored_power, self.max_reactor_power)
 
         # Update resource store for UI
@@ -732,6 +734,7 @@ class Simulation:
                     if ncomp is not None and ncomp.stats.heat_capacity > 0:
                         self.reactor_heat -= transfer_per
                         ncomp.heat += transfer_per
+        self.reactor_heat = max(0.0, self.reactor_heat)
 
     def _check_explosions(self) -> None:
         """RE: fn 10429 — heat overflow damage + component/reactor explosions.
@@ -821,7 +824,7 @@ class Simulation:
         """RE: unnamed_function_10506 — manual vent button.
         Vents min(reactor_heat, manual_vent_amount) from reactor hull."""
         vented = min(self.reactor_heat, self.manual_vent_amount)
-        self.reactor_heat -= vented
+        self.reactor_heat = max(0.0, self.reactor_heat - vented)
         self.store.heat = self.reactor_heat
         return vented
 
@@ -872,6 +875,7 @@ class Simulation:
         This keeps UI values responsive when the reactor is paused or when a panel
         is open and ticks are suppressed.
         """
+        self.reactor_heat = max(0.0, self.reactor_heat)
         self.upgrade_manager.prepare_multipliers(self)
         if self._pulses_dirty:
             self._distribute_pulses()
