@@ -161,6 +161,23 @@ main {
     image-rendering: crisp-edges;
 }
 
+.game-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.game-attribution {
+    margin-top: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--muted-fg);
+    text-align: center;
+}
+
+.game-attribution a {
+    color: var(--azure);
+}
+
 /* ── Loading screen ─────────────────────────────────────── */
 
 #loading {

@@ -34,6 +34,8 @@ cp web/style.css "$DIST/"
 cp web/renderer.js "$DIST/"
 cp web/input.js "$DIST/"
 cp web/loader.js "$DIST/"
+cp web/changelog.js "$DIST/"
+cp web/changelog.txt "$DIST/"
 cp web/mixy1.gif "$DIST/"
 
 # 2. Patch index.html: change src-base to 'src/' for flat structure
