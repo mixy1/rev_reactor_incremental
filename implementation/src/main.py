@@ -6,6 +6,16 @@ import sys
 
 _WEB = sys.platform == "emscripten"
 
+if _WEB:
+    # Async helper: wait for next requestAnimationFrame (vsync at ~60fps).
+    # Replaces asyncio.sleep(0) which runs unthrottled at ~375fps.
+    from pyodide.ffi import create_once_callable as _once  # type: ignore
+    from js import requestAnimationFrame as _raf            # type: ignore
+    async def _wait_frame():
+        fut = asyncio.get_event_loop().create_future()
+        _raf(_once(lambda _ts: fut.set_result(None)))
+        await fut
+
 if not _WEB:
     from pathlib import Path
 
@@ -890,8 +900,11 @@ async def main() -> None:
                     save_game(sim, save_path)
                     last_save_time = now
 
-            # Yield to browser event loop (no-op cost on native via asyncio.run)
-            await asyncio.sleep(0)
+            # Yield to browser event loop
+            if _WEB:
+                await _wait_frame()  # vsync via requestAnimationFrame (~60fps)
+            else:
+                await asyncio.sleep(0)
     finally:
         save_game(sim, save_path)
         if not _WEB:
