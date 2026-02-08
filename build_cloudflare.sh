@@ -18,7 +18,7 @@ cd "$(dirname "$0")"
 
 DIST="dist"
 SPRITES_SRC="decompilation/recovered/recovered_assets/sprites"
-SPRITES_CANDY_SRC="decompilation/recovered/recovered_assets/sprites_candy"
+SPRITES_CANDY_SRC="decompilation/recovered/recovered_assets/sprites_decayed"
 SRC_DIR="implementation/src"
 
 echo "=== Building for Cloudflare Pages ==="
@@ -51,9 +51,9 @@ fi
 # 3b. Copy candy sprite assets (if available)
 if [ -d "$SPRITES_CANDY_SRC" ]; then
     echo "Copying candy sprites..."
-    mkdir -p "$DIST/assets/sprites_candy"
-    cp "$SPRITES_CANDY_SRC"/*.png "$DIST/assets/sprites_candy/"
-    CANDY_COUNT=$(ls "$DIST/assets/sprites_candy"/*.png 2>/dev/null | wc -l)
+    mkdir -p "$DIST/assets/sprites_decayed"
+    cp "$SPRITES_CANDY_SRC"/*.png "$DIST/assets/sprites_decayed/"
+    CANDY_COUNT=$(ls "$DIST/assets/sprites_decayed"/*.png 2>/dev/null | wc -l)
     echo "  $CANDY_COUNT candy sprites"
 else
     echo "Note: Candy sprites not found (theme toggle will be inactive)"

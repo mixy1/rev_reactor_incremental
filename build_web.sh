@@ -12,9 +12,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SPRITES_SRC="../rev_reactor/decompilation/recovered/recovered_assets/sprites"
-SPRITES_CANDY_SRC="../rev_reactor/decompilation/recovered/recovered_assets/sprites_candy"
+SPRITES_CANDY_SRC="../rev_reactor/decompilation/recovered/recovered_assets/sprites_decayed"
 SPRITES_DST="web/assets/sprites"
-SPRITES_CANDY_DST="web/assets/sprites_candy"
+SPRITES_CANDY_DST="web/assets/sprites_decayed"
 ANALYSIS_SRC="../rev_reactor/decompilation/recovered/recovered_analysis"
 
 echo "=== Rev Reactor Web Build ==="

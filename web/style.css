@@ -137,10 +137,10 @@ a:hover {
     border-color: var(--muted-fg);
 }
 
-.theme-toggle-btn.candy-active {
-    background: linear-gradient(135deg, #ff6b9d, #c44dff);
-    color: #fff;
-    border-color: transparent;
+.theme-toggle-btn.decayed-active {
+    background: linear-gradient(135deg, #3a5a20, #1a3a0a);
+    color: #7fff00;
+    border-color: #4a6a2a;
 }
 
 /* ── Main ───────────────────────────────────────────────── */

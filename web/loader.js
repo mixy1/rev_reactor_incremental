@@ -197,8 +197,8 @@ except Exception:
     // ── 5. Theme management ─────────────────────────────────────────
 
     const defaultImages = {};  // name -> original Image (captured at load)
-    const candyImages = {};    // name -> candy Image (lazy-loaded)
-    let candyLoaded = false;
+    const altImages = {};      // name -> alt theme Image (lazy-loaded)
+    let altLoaded = false;
     let currentTheme = localStorage.getItem('sprite-theme') || 'default';
 
     // Snapshot the original images so we can restore them later
@@ -206,18 +206,18 @@ except Exception:
         defaultImages[name] = entry.img;
     }
 
-    async function loadCandySprites() {
-        if (candyLoaded) return;
+    async function loadAltSprites() {
+        if (altLoaded) return;
         const promises = manifest.map((name) => {
             return new Promise((resolve) => {
                 const img = new Image();
-                img.onload = () => { candyImages[name] = img; resolve(); };
+                img.onload = () => { altImages[name] = img; resolve(); };
                 img.onerror = () => { resolve(); };  // fall back to default
-                img.src = 'assets/sprites_candy/' + name;
+                img.src = 'assets/sprites_decayed/' + name;
             });
         });
         await Promise.all(promises);
-        candyLoaded = true;
+        altLoaded = true;
     }
 
     async function setTheme(theme) {
@@ -225,21 +225,21 @@ except Exception:
         localStorage.setItem('sprite-theme', theme);
         const btn = document.getElementById('theme-toggle');
 
-        if (theme === 'candy') {
-            await loadCandySprites();
+        if (theme === 'decayed') {
+            await loadAltSprites();
             for (const name of manifest) {
-                if (candyImages[name]) {
-                    Renderer.swapTexture(name, candyImages[name]);
+                if (altImages[name]) {
+                    Renderer.swapTexture(name, altImages[name]);
                 }
             }
-            if (btn) btn.classList.add('candy-active');
+            if (btn) btn.classList.add('decayed-active');
         } else {
             for (const name of manifest) {
                 if (defaultImages[name]) {
                     Renderer.swapTexture(name, defaultImages[name]);
                 }
             }
-            if (btn) btn.classList.remove('candy-active');
+            if (btn) btn.classList.remove('decayed-active');
         }
     }
 
@@ -247,13 +247,13 @@ except Exception:
     const themeBtn = document.getElementById('theme-toggle');
     if (themeBtn) {
         themeBtn.addEventListener('click', () => {
-            setTheme(currentTheme === 'candy' ? 'default' : 'candy');
+            setTheme(currentTheme === 'decayed' ? 'default' : 'decayed');
         });
     }
 
     // Apply saved theme preference (non-blocking)
-    if (currentTheme === 'candy') {
-        setTheme('candy');
+    if (currentTheme === 'decayed') {
+        setTheme('decayed');
     }
 
     // Start the game
