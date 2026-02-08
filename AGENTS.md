@@ -21,6 +21,7 @@
 
 ## Git
 - **Always use git.** Commit after completing meaningful units of work.
+- After each local commit, **push to `origin/master` automatically** unless explicitly told not to push.
 - Write clear commit messages that describe the *why*, not just the *what*.
 - Never force-push, amend published commits, or skip hooks without explicit permission.
 
