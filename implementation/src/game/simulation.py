@@ -1183,6 +1183,16 @@ class Simulation:
         if not self.shop_components:
             return []
         page = self.shop_page % 4
+        if self.shop_page != page:
+            self.shop_page = page
+        if self.shop_page_locked(page):
+            for fallback in range(4):
+                if not self.shop_page_locked(fallback):
+                    if self.shop_page != fallback:
+                        self.shop_page = fallback
+                        self.selected_component_index = -1
+                    page = fallback
+                    break
         components = [comp for comp in self.shop_components if comp.shop_page == page]
         if not components:
             components = [comp for comp in self.shop_components if _component_shop_page(comp.name) == page]

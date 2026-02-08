@@ -250,9 +250,6 @@ class Ui:
         mouse_y: float,
         mouse_pressed: bool,
     ) -> tuple[Optional[int], Optional[ComponentTypeStats]]:
-        shop_components = sim.shop_components_for_page()
-        if not shop_components:
-            return None, None
         tab_slots = self.store_tab_slots(layout)
         if tab_slots:
             tab_textures = [
@@ -282,6 +279,10 @@ class Ui:
                     if sim.shop_page != idx:
                         sim.selected_component_index = -1
                     sim.shop_page = idx
+
+        shop_components = sim.shop_components_for_page()
+        if not shop_components:
+            return None, None
 
         selected_index = None
         hovered_component = None
