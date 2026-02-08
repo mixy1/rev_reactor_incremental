@@ -39,3 +39,8 @@ REV_REACTOR_ASSETS_DIR=/path/to/recovered_assets
 - `decompilation/tools/extract_ui_layout.py` regenerates `implementation/layout.json` from Unity RectTransforms (Build.data).
 
 Next: decode serialized component stats from recovered MonoBehaviour blobs and wire the store list + prices to those values.
+
+## Web crash note (2026-02-08)
+
+- Renderer minidump for `https://nuclear.mixy.one` shows Windows fail-fast `0xC0000409` with parameter `0xD` (`int 0x29` in `ntdll`), not a Python traceback.
+- Initial mitigation applied: upgraded web runtime from `pyodide v0.27.0` to `v0.29.3` in `web/index.html` and `dist/index.html`.
