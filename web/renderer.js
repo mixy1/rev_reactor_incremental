@@ -19,12 +19,26 @@ globalThis.Renderer = (() => {
     const canvas = document.getElementById('game-canvas');
     const ctx = canvas.getContext('2d');
 
-    // Render at exactly 900x630 — no DPR scaling.
-    // CSS image-rendering: pixelated handles display upscaling via nearest-neighbor,
-    // keeping every pixel crisp regardless of devicePixelRatio.
+    // Game canvas: 900x630, pixelated CSS scaling for crisp sprites
     canvas.width = 900;
     canvas.height = 630;
     ctx.imageSmoothingEnabled = false;
+
+    // Text overlay canvas: DPR-scaled for smooth anti-aliased text
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const textCanvas = document.createElement('canvas');
+    textCanvas.id = 'text-canvas';
+    textCanvas.width = Math.round(900 * dpr);
+    textCanvas.height = Math.round(630 * dpr);
+    textCanvas.style.cssText = `
+        position: absolute; top: 0; left: 0;
+        width: ${canvas.offsetWidth}px; height: ${canvas.offsetHeight}px;
+        pointer-events: none;
+    `;
+    canvas.parentNode.style.position = 'relative';
+    canvas.parentNode.insertBefore(textCanvas, canvas.nextSibling);
+    const tctx2 = textCanvas.getContext('2d');
+    tctx2.scale(dpr, dpr);
 
     // Texture registry: id -> { img, name }
     const textures = {};       // id -> Image
@@ -193,6 +207,7 @@ globalThis.Renderer = (() => {
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
                     ctx.fillStyle = rgba(r, g, b, a);
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    tctx2.clearRect(0, 0, 900, 630);
                     break;
                 }
                 case 1: { // FILL_RECT: x,y,w,h,r,g,b,a
@@ -216,15 +231,15 @@ globalThis.Renderer = (() => {
                     ctx.globalAlpha = prev;
                     break;
                 }
-                case 3: { // DRAW_TEXT: strIdx,x,y,size,r,g,b,a
+                case 3: { // DRAW_TEXT: strIdx,x,y,size,r,g,b,a → text overlay canvas
                     const strIdx = cmds[i++] | 0;
                     const x = cmds[i++], y = cmds[i++], size = cmds[i++];
                     const r = cmds[i++], g = cmds[i++], b = cmds[i++], a = cmds[i++];
-                    ctx.font = getFont(size);
-                    ctx.fillStyle = rgba(r, g, b, a);
-                    ctx.textBaseline = 'top';
-                    ctx.textAlign = 'left';
-                    ctx.fillText(strings[strIdx] || '', x | 0, y | 0);
+                    tctx2.font = getFont(size);
+                    tctx2.fillStyle = rgba(r, g, b, a);
+                    tctx2.textBaseline = 'top';
+                    tctx2.textAlign = 'left';
+                    tctx2.fillText(strings[strIdx] || '', x, y);
                     break;
                 }
                 case 4: { // TEXTURE_PRO: texId,sx,sy,sw,sh,dx,dy,dw,dh,r,g,b,a
@@ -267,10 +282,15 @@ globalThis.Renderer = (() => {
                     ctx.beginPath();
                     ctx.rect(x, y, w, h);
                     ctx.clip();
+                    tctx2.save();
+                    tctx2.beginPath();
+                    tctx2.rect(x, y, w, h);
+                    tctx2.clip();
                     break;
                 }
                 case 7: { // END_SCISSOR
                     ctx.restore();
+                    tctx2.restore();
                     break;
                 }
                 default:
