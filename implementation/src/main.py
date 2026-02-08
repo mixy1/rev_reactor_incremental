@@ -488,7 +488,7 @@ async def main() -> None:
                             refund = Simulation.sell_value(existing)
                             sim.remove_component(cx, cy)
                             sim.store.money += refund
-                        else:
+                        elif is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
                             sim.selected_component_index = -1
                         last_sell_cell = cell
                 else:
