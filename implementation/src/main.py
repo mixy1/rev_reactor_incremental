@@ -276,7 +276,6 @@ async def main() -> None:
 
     show_reference = False
     reference_index = 0
-    last_place_cell = None
     last_sell_cell = None
     prev_mx, prev_my = 0.0, 0.0
 
@@ -453,7 +452,7 @@ async def main() -> None:
             # ── Grid: Left click — place / replace (reactor view only) ──
             if sim.view_mode == "reactor" and sim.grid is not None and is_mouse_button_down(MOUSE_BUTTON_LEFT) and not scrollbar_consumed:
                 cell = sim.grid.screen_to_cell(int(mx), int(my))
-                if cell is not None and cell != last_place_cell:
+                if cell is not None:
                     cx, cy = cell
                     selected = sim.selected_component()
                     if selected is not None:
@@ -473,9 +472,6 @@ async def main() -> None:
                                 sim.store.money += refund
                                 if sim.place_component(cx, cy, ReactorComponent(stats=selected)):
                                     sim.store.money -= cost
-                    last_place_cell = cell
-            elif not is_mouse_button_down(MOUSE_BUTTON_LEFT):
-                last_place_cell = None
 
             # ── Right click — sell / deselect ────────────────────────
             # RE: Two deselect paths in unnamed_function_10410:
