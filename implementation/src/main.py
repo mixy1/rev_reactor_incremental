@@ -266,6 +266,7 @@ async def main() -> None:
         top_banner=top_banner,
         upgrade_sprites=upgrade_sprites,
     )
+    ui.component_sprites = component_sprites
 
     if _WEB:
         ui.save_dir = True  # Signals web mode for export/import buttons
@@ -452,7 +453,12 @@ async def main() -> None:
             hover_help = (layout.help_x <= mx <= layout.help_x + sw and
                           layout.help_y <= my <= layout.help_y + sh)
             if hover_help and is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-                sim.view_mode = "reactor" if sim.view_mode == "help" else "help"
+                if sim.view_mode == "help":
+                    sim.view_mode = "reactor"
+                else:
+                    sim.view_mode = "help"
+                    ui.help_scroll_y = 0.0
+                    ui.help_drag_active = False
 
             # Clear confirmation state when navigating away from options
             # RE: fn 10489 — binary clears all confirmation state on navigation
@@ -730,7 +736,7 @@ async def main() -> None:
                                       mouse_pressed=is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
                                       dt=dt)
             elif sim.view_mode == "help":
-                ui.draw_help_panel(sim, layout)
+                ui.draw_help_panel(sim, layout, wheel_move=get_mouse_wheel_move(), mouse_x=mx, mouse_y=my, mouse_down=is_mouse_button_down(MOUSE_BUTTON_LEFT))
 
             draw_texture_pro(
                 grid_frame,

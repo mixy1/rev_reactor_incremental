@@ -12,11 +12,13 @@ from raylib_compat import (
     Color,
     Rectangle,
     Texture2D,
+    begin_scissor_mode,
     draw_rectangle,
     draw_rectangle_lines,
     draw_text,
     draw_texture_ex,
     draw_texture_pro,
+    end_scissor_mode,
     measure_text,
     Vector2,
 )
@@ -54,6 +56,10 @@ class Ui:
     store_tab_arcane_pressed: Optional[Texture2D] = None
     upgrade_sprites: Optional[dict] = None  # icon_path -> Texture2D
     save_dir: object = None  # Truthy to enable export/import buttons
+    component_sprites: Optional[dict] = None  # sprite_name -> Texture2D
+    help_scroll_y: float = 0.0  # scroll offset for help panel
+    help_drag_active: bool = False  # drag-to-scroll state
+    help_drag_last_y: float = 0.0
 
     @staticmethod
     def draw_warning_badge(x: int, y: int, size: int = 12) -> None:
@@ -899,13 +905,12 @@ class Ui:
             if hover_import and mouse_pressed:
                 import_save_from_file(sim)
 
-    def draw_help_panel(self, sim: Simulation, layout: Layout) -> None:
-        """Draw the Help panel in the grid content area."""
+    def draw_help_panel(self, sim: Simulation, layout: Layout, wheel_move: float = 0.0, mouse_x: float = 0.0, mouse_y: float = 0.0, mouse_down: bool = False) -> None:
+        """Draw a rich, scrollable Help panel in the grid content area."""
         panel_x = layout.top_panel_x
         panel_y = layout.top_panel_y
         panel_w = layout.top_panel_w
         panel_h = layout.top_panel_h
-        text_color = Color(230, 230, 230, 255)
 
         if self.top_banner is not None:
             draw_texture_ex(
@@ -915,34 +920,565 @@ class Ui:
                 Color(255, 255, 255, 255),
             )
 
+        # Content region sits below the top banner, inside the grid frame
         content_x = layout.upgrade_grid_x
-        content_y = layout.upgrade_grid_y + 4
+        content_y = layout.upgrade_grid_y
         content_w = panel_w - (content_x - panel_x) * 2
-        font_title = 14
-        font_sm = 12
-        line_h = 16
+        content_h = layout.window_height - content_y - (layout.window_height - layout.grid_frame_y - 513)
 
-        # Title
-        title = "Help"
-        tw = _measure(title, font_title)
-        draw_text(title, content_x + (content_w - tw) // 2, content_y, font_title, text_color)
-        y = content_y + 28
+        # Build content items
+        items, total_height = _build_help_content(content_w)
 
-        help_text = (
-            "Left-click a shop item to select it, then left-click on the grid to place it. "
-            "Right-click a grid cell to sell the component in it. "
-            "Replace mode: when enabled, placing a component on an occupied cell will sell the existing "
-            "component and replace it with the new one. "
-            "Sell All Power button converts all stored power into money. "
-            "Vent Heat button removes heat from the reactor hull. "
-            "Components generate heat when active; manage it with vents and exchangers to prevent meltdowns. "
-            "Fuel cells deplete over time; buy upgrades to improve their durability and output."
-        )
-        help_lines = _wrap_text(help_text, content_w, font_sm)
-        for line in help_lines:
-            lw = _measure(line, font_sm)
-            draw_text(line, content_x + (content_w - lw) // 2, y, font_sm, text_color)
-            y += line_h
+        # Scroll
+        max_scroll = max(0.0, total_height - content_h)
+        self.help_scroll_y -= wheel_move * 30
+
+        # Drag scrolling
+        if mouse_down:
+            if self.help_drag_active:
+                delta = self.help_drag_last_y - mouse_y
+                self.help_scroll_y += delta
+            else:
+                in_content = (content_x <= mouse_x <= content_x + content_w and
+                              content_y <= mouse_y <= content_y + content_h)
+                if in_content:
+                    self.help_drag_active = True
+            self.help_drag_last_y = mouse_y
+        else:
+            self.help_drag_active = False
+
+        self.help_scroll_y = max(0.0, min(self.help_scroll_y, max_scroll))
+
+        # Render inside scissor region
+        begin_scissor_mode(content_x, content_y, content_w, content_h)
+
+        header_color = Color(245, 200, 70, 255)
+        text_color = Color(210, 210, 220, 255)
+        divider_color = Color(80, 80, 100, 180)
+
+        for item in items:
+            tag = item[0]
+            item_y = item[1] - self.help_scroll_y + content_y
+
+            if tag == _HELP_HEADER:
+                _, y_off, text = item
+                if item_y + 20 < content_y or item_y > content_y + content_h:
+                    continue
+                draw_text(text, content_x + 4, int(item_y), 16, header_color)
+
+            elif tag == _HELP_TEXT:
+                _, y_off, text = item
+                if item_y + 14 < content_y or item_y > content_y + content_h:
+                    continue
+                draw_text(text, content_x + 4, int(item_y), 12, text_color)
+
+            elif tag == _HELP_SPRITE_LINE:
+                _, y_off, sprite_name, text = item
+                if item_y + 26 < content_y or item_y > content_y + content_h:
+                    continue
+                sprite_size = 24
+                tex = self.component_sprites.get(sprite_name) if self.component_sprites else None
+                text_x_offset = sprite_size + 6
+                if tex is not None:
+                    scale = sprite_size / max(1, max(tex.width, tex.height))
+                    dw = tex.width * scale
+                    dh = tex.height * scale
+                    sx = content_x + 4
+                    sy = item_y + 1
+                    draw_texture_pro(
+                        tex,
+                        Rectangle(0, 0, tex.width, tex.height),
+                        Rectangle(sx, sy, dw, dh),
+                        Vector2(0, 0), 0.0, Color(255, 255, 255, 255),
+                    )
+                else:
+                    text_x_offset = 4
+                # Draw wrapped text lines to the right of the sprite
+                wrap_w = content_w - text_x_offset - 8
+                lines = _wrap_text(text, wrap_w, 12)
+                ly = item_y + 2
+                for line in lines:
+                    draw_text(line, content_x + text_x_offset, int(ly), 12, text_color)
+                    ly += 14
+
+            elif tag == _HELP_GRID:
+                _, y_off, rows, height = item
+                if item_y + height < content_y or item_y > content_y + content_h:
+                    continue
+                cell = 26
+                gap = 2
+                grid_w = len(rows[0]) * (cell + gap) - gap if rows else 0
+                gx_start = content_x + (content_w - grid_w) // 2
+                sprites = self.component_sprites
+                for ri, row in enumerate(rows):
+                    for ci, sname in enumerate(row):
+                        if sname is None:
+                            continue
+                        tex = sprites.get(sname) if sprites else None
+                        if tex is None:
+                            continue
+                        cx = gx_start + ci * (cell + gap)
+                        cy = int(item_y) + ri * (cell + gap)
+                        sc = cell / max(1, max(tex.width, tex.height))
+                        dw = tex.width * sc
+                        dh = tex.height * sc
+                        ox = (cell - dw) * 0.5
+                        oy = (cell - dh) * 0.5
+                        draw_texture_pro(
+                            tex,
+                            Rectangle(0, 0, tex.width, tex.height),
+                            Rectangle(cx + ox, cy + oy, dw, dh),
+                            Vector2(0, 0), 0.0, Color(255, 255, 255, 255),
+                        )
+
+            elif tag == _HELP_SPRITE_ROW:
+                _, y_off, sprite_list, height = item
+                if item_y + height < content_y or item_y > content_y + content_h:
+                    continue
+                icon_sz = 28
+                gap = 6
+                total_w = len(sprite_list) * (icon_sz + gap) - gap
+                rx = content_x + (content_w - total_w) // 2
+                sprites = self.component_sprites
+                for si, sname in enumerate(sprite_list):
+                    tex = sprites.get(sname) if sprites else None
+                    if tex is None:
+                        continue
+                    ix = rx + si * (icon_sz + gap)
+                    sc = icon_sz / max(1, max(tex.width, tex.height))
+                    dw = tex.width * sc
+                    dh = tex.height * sc
+                    ox = (icon_sz - dw) * 0.5
+                    oy = (icon_sz - dh) * 0.5
+                    draw_texture_pro(
+                        tex,
+                        Rectangle(0, 0, tex.width, tex.height),
+                        Rectangle(ix + ox, int(item_y) + oy, dw, dh),
+                        Vector2(0, 0), 0.0, Color(255, 255, 255, 255),
+                    )
+
+            elif tag == _HELP_DIVIDER:
+                _, y_off = item
+                if item_y + 4 < content_y or item_y > content_y + content_h:
+                    continue
+                draw_rectangle(content_x + 8, int(item_y + 3), content_w - 16, 1, divider_color)
+
+            # _HELP_SPACER: just empty space, nothing to draw
+
+        end_scissor_mode()
+
+        # Scroll indicator (thin 4px track on right edge)
+        if max_scroll > 0:
+            track_x = content_x + content_w - 5
+            track_y = content_y + 2
+            track_h = content_h - 4
+            draw_rectangle(track_x, track_y, 4, track_h, Color(40, 40, 50, 160))
+            thumb_ratio = content_h / max(1, total_height)
+            thumb_h = max(16, int(track_h * thumb_ratio))
+            scroll_ratio = self.help_scroll_y / max(1.0, max_scroll)
+            thumb_y = track_y + int((track_h - thumb_h) * scroll_ratio)
+            draw_rectangle(track_x, thumb_y, 4, thumb_h, Color(160, 160, 180, 200))
+
+
+# ── Help panel content types ─────────────────────────────────────────
+_HELP_HEADER = 0
+_HELP_TEXT = 1
+_HELP_SPRITE_LINE = 2
+_HELP_DIVIDER = 3
+_HELP_SPACER = 4
+_HELP_GRID = 5
+_HELP_SPRITE_ROW = 6
+
+
+def _build_help_content(content_w: int) -> tuple[list, float]:
+    """Build a list of tagged items with pre-computed y-offsets.
+
+    Returns (items, total_height).
+    """
+    items: list = []
+    y = 4.0
+
+    def _header(text: str) -> None:
+        nonlocal y
+        items.append((_HELP_HEADER, y, text))
+        y += 22
+
+    def _text(text: str) -> None:
+        nonlocal y
+        lines = _wrap_text(text, content_w - 16, 12)
+        for line in lines:
+            items.append((_HELP_TEXT, y, line))
+            y += 14
+        y += 2
+
+    def _sprite_line(sprite_name: str, text: str) -> None:
+        nonlocal y
+        sprite_text_w = content_w - 38
+        lines = _wrap_text(text, sprite_text_w, 12)
+        line_count = max(1, len(lines))
+        height = max(26, line_count * 14 + 4)
+        items.append((_HELP_SPRITE_LINE, y, sprite_name, text))
+        y += height
+
+    def _divider() -> None:
+        nonlocal y
+        items.append((_HELP_DIVIDER, y))
+        y += 10
+
+    def _spacer(h: float = 6) -> None:
+        nonlocal y
+        items.append((_HELP_SPACER, y))
+        y += h
+
+    def _grid(rows: list[list]) -> None:
+        """Render a grid of sprites centered in the content area."""
+        nonlocal y
+        cell = 26
+        gap = 2
+        h = len(rows) * (cell + gap) - gap
+        items.append((_HELP_GRID, y, rows, h))
+        y += h + 4
+
+    def _sprite_row(sprites: list[str]) -> None:
+        """Render a horizontal row of sprites, centered."""
+        nonlocal y
+        h = 30
+        items.append((_HELP_SPRITE_ROW, y, sprites, h))
+        y += h + 2
+
+    F = "Fuel1-1.png"
+    V = "Vent1.png"
+    O = "Outlet1.png"
+    X = "Exchanger1.png"
+    R = "Reflector1.png"
+    I = "Inlet1.png"
+    C = "Coolant1.png"
+    K = "Capacitor1.png"
+    P = "Plate1.png"
+
+    # ══════════════════════════════════════════════════════════
+    # Section 1: Controls
+    # ══════════════════════════════════════════════════════════
+    _header("Controls")
+    _text(
+        "Left-click a shop item to select it (green highlight), then "
+        "left-click on the reactor grid to place it. Right-click a "
+        "placed component to sell it."
+    )
+    _text(
+        "Replace mode (top-right toggle): placing on an occupied cell "
+        "auto-sells the old component and places the new one."
+    )
+    _text(
+        "Middle-click drag or scroll wheel to pan the grid. "
+        "Press Space to pause/unpause the simulation."
+    )
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 2: Fuel Cells
+    # ══════════════════════════════════════════════════════════
+    _header("Fuel Cells")
+    _text(
+        "Fuel cells produce power and heat. They come in three sizes:"
+    )
+    _sprite_line("Fuel1-1.png",
+        "Single (1 core) - base output. Cheapest way to start.")
+    _sprite_line("Fuel1-2.png",
+        "Double (2 cores) - more pulses, more output per slot.")
+    _sprite_line("Fuel1-4.png",
+        "Quad (4 cores) - massive output, needs strong cooling.")
+    _spacer(4)
+    _text("There are 6 base fuel tiers with increasing stats:")
+    _sprite_row([
+        "Fuel1-1.png", "Fuel2-1.png", "Fuel3-1.png",
+        "Fuel4-1.png", "Fuel5-1.png", "Fuel6-1.png",
+    ])
+    _text("And 5 experimental fuels unlocked via prestige:")
+    _sprite_row([
+        "Fuel7-1.png", "Fuel8-1.png", "Fuel9-1.png",
+        "Fuel10-1.png", "Fuel11-1.png",
+    ])
+    _text(
+        "Protium gains permanent power from each depleted cell. "
+        "Kymium oscillates in a cosine wave. "
+        "Stavrium pulses its entire row and column!"
+    )
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 3: Pulse System
+    # ══════════════════════════════════════════════════════════
+    _header("Pulse System")
+    _text(
+        "Each fuel cell emits pulses to its 4 cardinal neighbors and "
+        "itself. Pulses from multiple sources stack."
+    )
+    _spacer(2)
+    _text("A lone fuel cell has 1 pulse (just itself):")
+    _grid([
+        [None, None, None],
+        [None, F,    None],
+        [None, None, None],
+    ])
+    _text("Two cells side by side - each gets 2 pulses:")
+    _grid([
+        [None, None, None, None],
+        [None, F,    F,    None],
+        [None, None, None, None],
+    ])
+    _text("A 3x3 block - center gets 5 pulses (1 self + 4 neighbors):")
+    _grid([
+        [F, F, F],
+        [F, F, F],
+        [F, F, F],
+    ])
+    _text(
+        "This matters because of the heat formula!"
+    )
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 4: Power & Heat Formulas
+    # ══════════════════════════════════════════════════════════
+    _header("Power & Heat Formulas")
+    _text("Each tick, fuel cells calculate:")
+    _text("  Power = pulses * energyPerPulse * upgrades")
+    _text("  Heat  = pulses^2 * heatPerPulse / cellArea")
+    _spacer(4)
+    _text(
+        "Power scales linearly with pulses, but heat scales with the "
+        "SQUARE. A cell with 5 pulses makes 25x the heat of a lone "
+        "cell! This is the core tension of reactor design."
+    )
+    _spacer(4)
+    _text(
+        "Heat from a fuel cell is split equally among cardinal "
+        "neighbors that can hold heat. If none exist, all heat goes "
+        "directly to the reactor hull."
+    )
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 5: Heat Components
+    # ══════════════════════════════════════════════════════════
+    _header("Heat Components")
+    _text(
+        "If hull heat reaches max, 5% of overflow hits every component "
+        "each tick. Components explode at their heat capacity. At 2x "
+        "max hull heat, ALL components are destroyed (full meltdown)."
+    )
+    _spacer(4)
+    _sprite_line("Vent1.png",
+        "Vent - the only exit for heat. Dissipates its stored heat "
+        "into the air each tick. Must be fed by outlets or fuel "
+        "neighbors.")
+    _text("Vent tiers (higher = faster dissipation):")
+    _sprite_row([
+        "Vent1.png", "Vent2.png", "Vent3.png",
+        "Vent4.png", "Vent5.png",
+    ])
+    _spacer(4)
+    _sprite_line("Outlet1.png",
+        "Outlet - transfers heat FROM the reactor hull INTO adjacent "
+        "components. Place next to dedicated vents, not fuel.")
+    _text("Outlet tiers:")
+    _sprite_row([
+        "Outlet1.png", "Outlet2.png", "Outlet3.png",
+        "Outlet4.png", "Outlet5.png",
+    ])
+    _spacer(4)
+    _sprite_line("Inlet1.png",
+        "Inlet - pulls heat FROM adjacent components INTO the hull. "
+        "Rescues overheating components.")
+    _text("Inlet tiers:")
+    _sprite_row([
+        "Inlet1.png", "Inlet2.png", "Inlet3.png",
+        "Inlet4.png", "Inlet5.png",
+    ])
+    _spacer(4)
+    _sprite_line("Exchanger1.png",
+        "Exchanger - balances heat with each neighbor toward an equal "
+        "fill ratio. Spreads heat from hot to cool components.")
+    _text("Exchanger tiers:")
+    _sprite_row([
+        "Exchanger1.png", "Exchanger2.png", "Exchanger3.png",
+        "Exchanger4.png", "Exchanger5.png",
+    ])
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 6: The Heat Pipeline
+    # ══════════════════════════════════════════════════════════
+    _header("The Heat Pipeline")
+    _text("Heat flows through your reactor in stages:")
+    _spacer(2)
+    _sprite_line("Fuel1-1.png", "1. Fuel cells GENERATE heat")
+    _sprite_line("Exchanger1.png", "2. Exchangers SPREAD heat evenly")
+    _sprite_line("Inlet1.png", "3. Inlets PULL component heat to hull")
+    _sprite_line("Outlet1.png", "4. Outlets PUSH hull heat to vents")
+    _sprite_line("Vent1.png", "5. Vents DISSIPATE heat to air")
+    _spacer(4)
+    _text("Example - direct vent cooling:")
+    _grid([
+        [None, V, None],
+        [V,    F, V],
+        [None, V, None],
+    ])
+    _text(
+        "Fuel heat splits equally among 4 adjacent vents. Each vent "
+        "dissipates its share to air. Simple and effective early on."
+    )
+    _spacer(4)
+    _text("Example - separated cooling (outlets feed dedicated vents):")
+    _grid([
+        [V, O, V],
+        [R, F, R],
+        [V, O, V],
+    ])
+    _text(
+        "Reflectors block direct heat absorption - all fuel heat goes "
+        "to hull. Outlets push hull heat to corner vents. Those vents "
+        "are NOT adjacent to fuel, so they only handle hull heat."
+    )
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 7: Other Components
+    # ══════════════════════════════════════════════════════════
+    _header("Other Components")
+    _sprite_line("Reflector1.png",
+        "Reflector - gives +10% power to each adjacent fuel cell per "
+        "upgrade level. Only boosts POWER, not heat. Loses durability "
+        "from neighbor pulses. Thermally isolated.")
+    _text("Reflector tiers:")
+    _sprite_row([
+        "Reflector1.png", "Reflector2.png", "Reflector3.png",
+        "Reflector4.png", "Reflector5.png",
+    ])
+    _spacer(4)
+    _sprite_line("Capacitor1.png",
+        "Capacitor - adds to max power storage (base: 100). More "
+        "storage = more power banked before selling.")
+    _sprite_line("Plate1.png",
+        "Plating - adds to max hull heat capacity (base: 1000). "
+        "More headroom before overflow and meltdown.")
+    _text("Capacitor and Plating tiers:")
+    _sprite_row([
+        "Capacitor1.png", "Capacitor2.png", "Capacitor3.png",
+        "Capacitor4.png", "Capacitor5.png",
+    ])
+    _sprite_row([
+        "Plate1.png", "Plate2.png", "Plate3.png",
+        "Plate4.png", "Plate5.png",
+    ])
+    _spacer(4)
+    _sprite_line("Coolant1.png",
+        "Coolant - passive heat sink with high capacity. Absorbs heat "
+        "from adjacent fuel. Relies on exchangers/inlets to drain.")
+    _sprite_line("Coolant6.png",
+        "Extreme Coolant (Tier 6) - absorbs 10% of heat from all "
+        "components within distance 2, but its heat is permanently "
+        "trapped. Cannot be drained by exchangers or inlets!")
+    _text("Coolant tiers:")
+    _sprite_row([
+        "Coolant1.png", "Coolant2.png", "Coolant3.png",
+        "Coolant4.png", "Coolant5.png", "Coolant6.png",
+    ])
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 8: Selling & Money
+    # ══════════════════════════════════════════════════════════
+    _header("Selling & Money")
+    _text(
+        "Right-click to sell. Sell value depends on condition:")
+    _text(
+        "  sell = cost * (1 - heat/maxHeat)^2 * (dur/maxDur)^2")
+    _text(
+        "Fuel cells always sell for $0. Pristine components sell "
+        "for full cost. Damaged ones sell for much less."
+    )
+    _spacer(4)
+    _text(
+        "Click 'Sell All Power' to convert stored power to money. "
+        "Auto-sell upgrades sell automatically each tick. When broke, "
+        "the 'Scrounge for cash' button gives you $1."
+    )
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 9: Upgrades & Prestige
+    # ══════════════════════════════════════════════════════════
+    _header("Upgrades & Prestige")
+    _text(
+        "Spend money on upgrades to improve fuel durability, power, "
+        "vent rates, and more. Most can be purchased multiple times."
+    )
+    _text(
+        "Prestige resets everything but earns exotic particles (EP) "
+        "based on total money. EP buys permanent upgrades that "
+        "persist through resets and unlock experimental fuels."
+    )
+    _text(
+        "Tip: wait for 51+ EP before your first prestige."
+    )
+    _divider()
+
+    # ══════════════════════════════════════════════════════════
+    # Section 10: Layout Strategy
+    # ══════════════════════════════════════════════════════════
+    _header("Layout Strategy")
+    _text("Early game: checkerboard fuel + vents (1 pulse each):")
+    _grid([
+        [F, V, F, V, F],
+        [V, F, V, F, V],
+        [F, V, F, V, F],
+    ])
+    _text(
+        "Each fuel cell only has vent neighbors so pulse count = 1 "
+        "(self only). Minimal heat, vents handle it directly."
+    )
+    _spacer(6)
+    _text(
+        "Mid/Late game: separate your cooling bank from your fuel. "
+        "Fuel cells can explode and destroy neighbors!"
+    )
+    _grid([
+        [K, V, K, R, F],
+        [V, O, V, R, F],
+        [K, V, K, R, F],
+    ])
+    _text(
+        "Left: cooling bank - outlet surrounded by vents, capacitors "
+        "for power storage and active venting. Center: reflector "
+        "buffer protects capacitors from explosions AND boosts "
+        "adjacent fuel power. Right: fuel cells."
+    )
+    _spacer(6)
+    _text("Scaling up: more outlets, more vents, more fuel:")
+    _grid([
+        [K, V, K, P, F, F],
+        [V, O, V, R, F, F],
+        [K, V, K, R, F, F],
+        [V, O, V, R, F, F],
+        [K, V, K, P, F, F],
+    ])
+    _text(
+        "Plates and reflectors form a buffer between the cooling "
+        "bank and the fuel cluster. Fuel heat all goes to hull "
+        "(neighbors are fuel or reflectors with 0 heat capacity), "
+        "then outlets pull it to vents."
+    )
+    _spacer(6)
+    _text(
+        "Remember: vents are often the bottleneck. Their dissipation "
+        "rate limits total cooling. If heat builds up, add more vents "
+        "or upgrade to higher-tier vents."
+    )
+    _spacer(60)
+
+    return items, y
 
 
 # ── Upgrade grid position tables (row, col) ──────────────────────────
