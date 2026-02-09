@@ -144,14 +144,9 @@ globalThis.Renderer = (() => {
             return;
         }
 
-        if (r === g && g === b && a === 255) {
-            // Grayscale dim — approximate with alpha
-            const prev = ctx.globalAlpha;
-            ctx.globalAlpha = r / 255;
-            ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-            ctx.globalAlpha = prev;
-            return;
-        }
+        // Grayscale dim used to approximate with alpha, but that makes
+        // textures transparent instead of darker.  Fall through to the
+        // proper multiply-composite path below.
 
         // Color tint (e.g. green highlight) — offscreen composite
         const tw = Math.ceil(Math.abs(sw));
