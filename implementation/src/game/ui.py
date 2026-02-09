@@ -1145,7 +1145,7 @@ def _format_sell_line(placed: ReactorComponent) -> str:
 
 
 
-def format_number_with_suffix(value: float, max_decimals: int = 2, min_decimals: int = 0) -> str:
+def format_number_with_suffix(value: float, max_decimals: int = 3, min_decimals: int = 0) -> str:
     zero = "0." + "0" * min_decimals if min_decimals > 0 else "0"
     if not math.isfinite(value):
         return zero
@@ -1194,14 +1194,7 @@ def format_number_with_suffix(value: float, max_decimals: int = 2, min_decimals:
         group += 1
         scale *= 1000
         scaled = value / scale
-    clamped_max = max(0, min(4, max_decimals))
-    mag = abs(scaled)
-    if mag >= 100:
-        decimals = 0
-    elif mag >= 10:
-        decimals = min(1, clamped_max)
-    else:
-        decimals = clamped_max
+    decimals = max(0, min(4, max_decimals))
 
     out = f"{scaled:.{decimals}f}"
     if "." in out:
