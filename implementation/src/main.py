@@ -362,11 +362,16 @@ async def main() -> None:
                     mouse_pressed=is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
                 )
                 # Left-click drag pans when no shop component is selected
+                # and cursor is within the grid viewport
+                g = sim.grid
+                in_grid = (g.origin_x <= mx < g.origin_x + g.viewport_w and
+                           g.origin_y <= my < g.origin_y + g.viewport_h)
                 left_pan = (
                     is_mouse_button_down(MOUSE_BUTTON_LEFT)
                     and not scrollbar_consumed
                     and sim.selected_component_index == -1
-                    and sim.grid.needs_scroll
+                    and g.needs_scroll
+                    and in_grid
                 )
                 sim.grid.handle_scroll_input(
                     mx, my, prev_mx, prev_my,
