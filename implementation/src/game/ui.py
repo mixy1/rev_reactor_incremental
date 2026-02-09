@@ -168,9 +168,9 @@ class Ui:
         )
 
         # Vent Heat button (RE: "-{ventAmount} Heat (-{ventRate} per tick)")
-        vent_amt = format_number_with_suffix(sim.manual_vent_amount, max_decimals=1)
-        vent_rate = format_number_with_suffix(sim.auto_vent_rate_per_tick(), max_decimals=1)
-        vent_cap = format_number_with_suffix(sim.preview_active_dissipation, max_decimals=1)
+        vent_amt = format_number_with_suffix(sim.manual_vent_amount, max_decimals=2)
+        vent_rate = format_number_with_suffix(sim.auto_vent_rate_per_tick(), max_decimals=2)
+        vent_cap = format_number_with_suffix(sim.preview_active_dissipation, max_decimals=2)
         label = f"-{vent_amt} Heat (-{vent_rate}/t, cap {vent_cap}/t)"
         bx, by = layout.vent_x, layout.vent_y
         tex = self.button_base
@@ -201,8 +201,8 @@ class Ui:
         if sim.can_scrounge():
             label = "Scrounge for cash (+1$)"
         else:
-            power_str = format_number_with_suffix(sim.stored_power, max_decimals=1)
-            rate_str = format_number_with_suffix(sim.auto_sell_rate_per_tick(), max_decimals=1)
+            power_str = format_number_with_suffix(sim.stored_power, max_decimals=2)
+            rate_str = format_number_with_suffix(sim.auto_sell_rate_per_tick(), max_decimals=2)
             label = f"Sell Power:+{power_str}$ (+{rate_str}$/t)"
         bx, by = layout.sell_x, layout.sell_y
         tex = self.button_base
@@ -708,9 +708,9 @@ class Ui:
             f"Current Reactor Heat: {fmt(sim.reactor_heat)}",
             f"Total Heat dissipated: {fmt(sim.store.total_heat_dissipated)}",
             f"Heat dissipated this game: {fmt(sim.store.heat_dissipated_this_game)}",
-            f"Vent dissipation cap: {fmt(sim.preview_vent_capacity, max_decimals=1)}/t",
-            f"Outlet transfer cap: {fmt(sim.preview_outlet_capacity, max_decimals=1)}/t",
-            f"Outlet + vent cap: {fmt(sim.preview_vent_capacity + sim.preview_outlet_capacity, max_decimals=1)}/t",
+            f"Vent dissipation cap: {fmt(sim.preview_vent_capacity, max_decimals=4)}/t",
+            f"Outlet transfer cap: {fmt(sim.preview_outlet_capacity, max_decimals=4)}/t",
+            f"Outlet + vent cap: {fmt(sim.preview_vent_capacity + sim.preview_outlet_capacity, max_decimals=4)}/t",
             "",
             f"Current Exotic Particles: {fmt(sim.store.exotic_particles)}",
             f"Total Exotic Particles: {fmt(sim.store.total_exotic_particles)}",
