@@ -118,6 +118,7 @@ class Simulation:
     last_power_change: float = 0.0   # per-tick delta for UI
     preview_vent_capacity: float = 0.0    # current vent dissipation capacity (/tick)
     preview_outlet_capacity: float = 0.0  # current outlet transfer capacity (/tick)
+    preview_active_dissipation: float = 0.0  # vent capacity for outlet-adjacent vents only
 
     # Max capacities (RE: unnamed_function_10412/10413)
     # Heat: GetStatCached(1, 0xb) * 1000.0 + sum(component contributions)
@@ -198,6 +199,7 @@ class Simulation:
         self.upgrade_manager.prepare_multipliers(self)
         self.preview_vent_capacity = self.vent_dissipation_capacity_per_tick()
         self.preview_outlet_capacity = self.outlet_transfer_capacity_per_tick()
+        self.preview_active_dissipation = self.active_dissipation_capacity_per_tick()
 
         # Step 2: DistributePulses (recalc when layout changes)
         if self._pulses_dirty:
@@ -856,6 +858,28 @@ class Simulation:
         vent_bonus = self._stat_mult(comp.stats.component_type_id, StatCategory.SELF_VENT_RATE)
         return comp.stats.self_vent_rate * vent_bonus * self.self_vent_mult
 
+    def active_dissipation_capacity_per_tick(self) -> float:
+        """Sum vent capacity for vents adjacent to at least one outlet."""
+        if self.grid is None:
+            return 0.0
+        seen_vent_ids: set[int] = set()
+        total = 0.0
+        for comp in self.components:
+            if comp.depleted or comp.stats.type_of_component != "Outlet":
+                continue
+            for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
+                ncomp = self.grid.get(nx, ny, nz)
+                if ncomp is None:
+                    continue
+                vid = id(ncomp)
+                if vid in seen_vent_ids:
+                    continue
+                cap = self.vent_dissipation_capacity_for(ncomp)
+                if cap > 0:
+                    seen_vent_ids.add(vid)
+                    total += cap
+        return total
+
     def outlet_transfer_capacity_per_tick(self) -> float:
         """Maximum per-tick reactor->component transfer capacity from outlets."""
         total = 0.0
@@ -935,6 +959,7 @@ class Simulation:
 
         self.preview_vent_capacity = self.vent_dissipation_capacity_per_tick()
         self.preview_outlet_capacity = self.outlet_transfer_capacity_per_tick()
+        self.preview_active_dissipation = self.active_dissipation_capacity_per_tick()
 
     def auto_sell_rate_per_tick(self) -> float:
         """RE: unnamed_function_10417 — auto-sell rate shown on sell button.

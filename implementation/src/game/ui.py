@@ -100,7 +100,7 @@ class Ui:
         heat_label = (
             f"{format_number_with_suffix(sim.reactor_heat)}/"
             f"{format_number_with_suffix(sim.max_reactor_heat)} "
-            f"({heat_sign}{format_number_with_suffix(heat_delta)}/t)"
+            f"({heat_sign}{format_number_with_suffix(heat_delta, min_decimals=2)}/t)"
         )
         heat_max_w = layout.heat_bar_x + layout.bar_width - text_x - 4
         heat_font = _fit_font_size(heat_label, heat_max_w, 16)
@@ -170,7 +170,7 @@ class Ui:
         # Vent Heat button (RE: "-{ventAmount} Heat (-{ventRate} per tick)")
         vent_amt = format_number_with_suffix(sim.manual_vent_amount, max_decimals=1)
         vent_rate = format_number_with_suffix(sim.auto_vent_rate_per_tick(), max_decimals=1)
-        vent_cap = format_number_with_suffix(sim.preview_vent_capacity, max_decimals=1)
+        vent_cap = format_number_with_suffix(sim.preview_active_dissipation, max_decimals=1)
         label = f"-{vent_amt} Heat (-{vent_rate}/t, cap {vent_cap}/t)"
         bx, by = layout.vent_x, layout.vent_y
         tex = self.button_base
@@ -1145,11 +1145,12 @@ def _format_sell_line(placed: ReactorComponent) -> str:
 
 
 
-def format_number_with_suffix(value: float, max_decimals: int = 2) -> str:
+def format_number_with_suffix(value: float, max_decimals: int = 2, min_decimals: int = 0) -> str:
+    zero = "0." + "0" * min_decimals if min_decimals > 0 else "0"
     if not math.isfinite(value):
-        return "0"
+        return zero
     if value == 0.0:
-        return "0"
+        return zero
 
     # Derived from FormatNumberWithSuffix in the decompiled WebGL build.
     suffixes = [
@@ -1205,4 +1206,11 @@ def format_number_with_suffix(value: float, max_decimals: int = 2) -> str:
     out = f"{scaled:.{decimals}f}"
     if "." in out:
         out = out.rstrip("0").rstrip(".")
+    if min_decimals > 0:
+        if "." not in out:
+            out += "." + "0" * min_decimals
+        else:
+            current = len(out.split(".")[1])
+            if current < min_decimals:
+                out += "0" * (min_decimals - current)
     return f"{out}{suffixes[group]}"
