@@ -35,7 +35,8 @@ cp web/renderer.js "$DIST/"
 cp web/input.js "$DIST/"
 cp web/loader.js "$DIST/"
 cp web/changelog.js "$DIST/"
-cp web/changelog.txt "$DIST/"
+# Generate changelog from git log (same format as old changelog.txt)
+git log --format="%ad	%s" --date=format:"%Y-%m-%d %H:%M:%S" > "$DIST/changelog.txt"
 cp web/mixy1.gif "$DIST/"
 
 # 2. Patch index.html: change src-base to 'src/' for flat structure
