@@ -267,7 +267,7 @@ class Ui:
                     tex = pressed
                 elif hovered and hover is not None and not locked:
                     tex = hover
-                tint = Color(70, 70, 70, 255) if locked else Color(255, 255, 255, 255)
+                tint = Color(160, 160, 160, 255) if locked else Color(255, 255, 255, 255)
                 draw_texture_ex(tex, Vector2(x, y), 0.0, 1.0, tint)
                 if hovered and mouse_pressed and not locked:
                     if sim.shop_page != idx:
@@ -542,7 +542,7 @@ class Ui:
             if can_buy:
                 tint = Color(255, 255, 255, 255)
             else:
-                tint = Color(70, 70, 70, 255)
+                tint = Color(160, 160, 160, 255)
 
             if tex is not None:
                 draw_texture_ex(tex, Vector2(x, y), 0.0, 1.0, tint)

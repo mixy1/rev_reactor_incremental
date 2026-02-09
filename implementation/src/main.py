@@ -608,7 +608,7 @@ async def main() -> None:
                         offset_y = (cell_sz - draw_h) * 0.5
 
                         if component.depleted:
-                            tint = Color(100, 100, 100, 255)
+                            tint = Color(180, 180, 180, 255)
                         else:
                             tint = Color(255, 255, 255, 255)
 
@@ -864,7 +864,7 @@ async def main() -> None:
                 if _idx == sim.selected_component_index and sim.store.money >= eff_cost:
                     tint = Color(120, 255, 120, 255)  # green tint for selected + affordable
                 elif eff_cost > 0.0 and sim.store.money < eff_cost:
-                    tint = Color(70, 70, 70, 255)  # dim for unaffordable
+                    tint = Color(160, 160, 160, 255)  # dim for unaffordable
                 else:
                     tint = Color(255, 255, 255, 255)
                 draw_texture_pro(
