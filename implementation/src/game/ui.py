@@ -98,9 +98,9 @@ class Ui:
         heat_delta = sim.last_heat_change
         heat_sign = "+" if heat_delta >= 0 else ""
         heat_label = (
-            f"{format_number_with_suffix(sim.reactor_heat)}/"
-            f"{format_number_with_suffix(sim.max_reactor_heat)} "
-            f"({heat_sign}{format_number_with_suffix(heat_delta, min_decimals=2)}/t)"
+            f"{format_number_with_suffix(sim.reactor_heat, max_decimals=0)}/"
+            f"{format_number_with_suffix(sim.max_reactor_heat, max_decimals=0)} "
+            f"({heat_sign}{format_number_with_suffix(heat_delta, min_decimals=3)}/t)"
         )
         heat_max_w = layout.heat_bar_x + layout.bar_width - text_x - 4
         heat_font = _fit_font_size(heat_label, heat_max_w, 16)
@@ -133,9 +133,9 @@ class Ui:
         power_delta = sim.last_power_change
         power_sign = "+" if power_delta >= 0 else ""
         power_label = (
-            f"{format_number_with_suffix(sim.stored_power)}/"
-            f"{format_number_with_suffix(sim.max_reactor_power)} "
-            f"({power_sign}{format_number_with_suffix(power_delta)}/t)"
+            f"{format_number_with_suffix(sim.stored_power, max_decimals=0)}/"
+            f"{format_number_with_suffix(sim.max_reactor_power, max_decimals=0)} "
+            f"({power_sign}{format_number_with_suffix(power_delta, min_decimals=3)}/t)"
         )
         power_max_w = layout.power_bar_x + layout.bar_width - text_x - 4
         power_font = _fit_font_size(power_label, power_max_w, 16)
