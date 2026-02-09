@@ -61,6 +61,9 @@ globalThis.Input = (() => {
     });
 
     canvas.addEventListener('mousedown', (e) => {
+        // Prevent browser auto-scroll on middle click
+        if (e.button === 1) e.preventDefault();
+
         if (!mouseDown.has(e.button)) {
             mousePressed.add(e.button);
         }
