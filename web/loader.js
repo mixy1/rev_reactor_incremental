@@ -194,7 +194,40 @@ except Exception:
         }
     });
 
-    // ── 5. Theme management ─────────────────────────────────────────
+    // ── 5. Version polling ────────────────────────────────────────────
+
+    (async function versionCheck() {
+        let currentVersion;
+        try {
+            const resp = await fetch('version.txt', { cache: 'no-cache' });
+            if (!resp.ok) return;
+            currentVersion = (await resp.text()).trim();
+        } catch (_) { return; }
+
+        const POLL_MS = 2 * 60 * 1000; // 2 minutes
+        const tid = setInterval(async () => {
+            if (document.hidden) return;
+            try {
+                const resp = await fetch('version.txt', { cache: 'no-cache' });
+                if (!resp.ok) return;
+                const latest = (await resp.text()).trim();
+                if (latest !== currentVersion) {
+                    clearInterval(tid);
+                    const bar = document.createElement('div');
+                    bar.style.cssText =
+                        'position:fixed;top:0;left:0;right:0;z-index:999;' +
+                        'background:#1a6b2a;color:#fff;text-align:center;' +
+                        'padding:8px;font-size:14px;cursor:pointer;' +
+                        'font-family:Inter,sans-serif;';
+                    bar.textContent = 'A new version is available — click to refresh';
+                    bar.addEventListener('click', () => location.reload());
+                    document.body.prepend(bar);
+                }
+            } catch (_) { /* retry next interval */ }
+        }, POLL_MS);
+    })();
+
+    // ── 6. Theme management ─────────────────────────────────────────
 
     const defaultImages = {};  // name -> original Image (captured at load)
     const altImages = {};      // name -> alt theme Image (lazy-loaded)
