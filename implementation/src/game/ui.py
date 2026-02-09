@@ -203,7 +203,7 @@ class Ui:
         else:
             power_str = format_number_with_suffix(sim.stored_power, max_decimals=2)
             rate_str = format_number_with_suffix(sim.auto_sell_rate_per_tick(), max_decimals=2)
-            label = f"Sell Power:+{power_str}$ (+{rate_str}$/t)"
+            label = f"+{power_str}$ (+{rate_str}$/t)"
         bx, by = layout.sell_x, layout.sell_y
         tex = self.button_base
         if pressed_sell and self.button_pressed is not None:
