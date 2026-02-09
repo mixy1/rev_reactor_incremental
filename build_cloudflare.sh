@@ -36,6 +36,8 @@ cp web/input.js "$DIST/"
 cp web/loader.js "$DIST/"
 cp web/changelog.js "$DIST/"
 # Generate changelog from git log (same format as old changelog.txt)
+# Unshallow if CI did a shallow clone so we get the full history
+git fetch --unshallow 2>/dev/null || true
 git log --format="%ad	%s" --date=format:"%Y-%m-%d %H:%M:%S" > "$DIST/changelog.txt"
 cp web/mixy1.gif "$DIST/"
 
