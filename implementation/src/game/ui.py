@@ -410,8 +410,7 @@ class Ui:
         usable_w = right_edge - panel_x - margin
         title_w = _measure(title, font_title)
         title_x = panel_x + max(0, (usable_w - title_w) // 2 + margin)
-        # Push title down if per-tick lines occupy the top row
-        title_y = panel_y + (28 if has_per_tick else 12)
+        title_y = panel_y + 12
         draw_text(title, title_x, title_y, font_title, text_color)
 
         # ── Slot 1: Description — centered, wrapped, below title ──
