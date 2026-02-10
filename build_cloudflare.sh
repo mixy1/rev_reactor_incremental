@@ -49,13 +49,34 @@ cp web/changelog.js "$DIST/"
 echo -n "$(git rev-parse HEAD)" > "$DIST/version.txt"
 cp web/mixy1.gif "$DIST/"
 
+MIN_CHANGELOG_COMMITS=120
+if git rev-parse --is-shallow-repository >/dev/null 2>&1; then
+    IS_SHALLOW="$(git rev-parse --is-shallow-repository)"
+else
+    IS_SHALLOW="false"
+fi
+
+if [ "$IS_SHALLOW" = "true" ]; then
+    CURRENT_COMMITS="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+    if [ "${CURRENT_COMMITS:-0}" -lt "$MIN_CHANGELOG_COMMITS" ]; then
+        DEEPEN_BY=$((MIN_CHANGELOG_COMMITS - CURRENT_COMMITS + 32))
+        echo "Repository is shallow ($CURRENT_COMMITS commits); deepening history by $DEEPEN_BY..."
+        if git fetch --deepen "$DEEPEN_BY" origin >/dev/null 2>&1; then
+            UPDATED_COMMITS="$(git rev-list --count HEAD 2>/dev/null || echo "$CURRENT_COMMITS")"
+            echo "  History deepened to $UPDATED_COMMITS commits"
+        else
+            echo "Warning: failed to deepen git history; changelog may be truncated"
+        fi
+    fi
+fi
+
 echo "Generating changelog.json from git log..."
 "$PYTHON_BIN" -c '
 import json
 import subprocess
 
 proc = subprocess.run(
-    ["git", "log", "--pretty=format:%cI%x09%s"],
+    ["git", "log", "--max-count=300", "--pretty=format:%cI%x09%s"],
     capture_output=True,
     text=True,
     check=True,
