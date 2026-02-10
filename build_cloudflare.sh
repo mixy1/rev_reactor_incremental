@@ -23,6 +23,17 @@ SRC_DIR="implementation/src"
 
 echo "=== Building for Cloudflare Pages ==="
 
+# Use an available Python interpreter without requiring uv.
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+else
+    echo "Error: python interpreter not found in PATH"
+    exit 1
+fi
+echo "Using Python interpreter: $PYTHON_BIN"
+
 # Clean previous build
 rm -rf "$DIST"
 mkdir -p "$DIST/assets/sprites" "$DIST/src/game"
@@ -69,12 +80,18 @@ else
 fi
 
 echo "Generating manifest.json..."
-(cd "$DIST/assets/sprites" && ls *.png 2>/dev/null) | uv run python -c "
+(
+    shopt -s nullglob
+    cd "$DIST/assets/sprites"
+    for f in *.png; do
+        printf '%s\n' "$f"
+    done
+) | "$PYTHON_BIN" -c "
 import sys, json
 names = [line.strip() for line in sys.stdin if line.strip()]
 print(json.dumps(sorted(names), indent=2))
 " > "$DIST/manifest.json"
-SPRITE_COUNT=$(uv run python -c "import json; print(len(json.load(open('$DIST/manifest.json'))))")
+SPRITE_COUNT=$("$PYTHON_BIN" -c "import json; print(len(json.load(open('$DIST/manifest.json'))))")
 echo "  $SPRITE_COUNT sprites"
 
 # 4. Copy Python source files
