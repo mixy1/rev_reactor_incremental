@@ -1007,6 +1007,9 @@ async def main() -> None:
                 unload_texture(tex)
             close_window()
 
+def run() -> None:
+    asyncio.run(main())
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run()

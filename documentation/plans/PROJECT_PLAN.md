@@ -73,7 +73,7 @@ Steps:
 
 ## Phase 5 — Reimplementation Architecture (Python + Raylib)
 Deliverables:
-- [ ] Python project skeleton + module layout.
+- [x] Python project skeleton + module layout.
 - [ ] Core simulation (deterministic, testable).
 - [ ] Serialization format for save/load.
 - [ ] UI/rendering layer plan (raylib via Python bindings).
@@ -107,6 +107,7 @@ Steps:
 - [x] wasm generated and loaded in Ghidra MCP.
 - [x] MethodIndex → wasm function name mapping confirmed for core classes.
 - [x] Core Simulation + UI methods renamed in Ghidra and documented.
+- [x] Python project packaging migrated to `pyproject.toml` + `uv.lock`.
 
 ## Next Actions
 - [x] Extracted all 75 component types with complete stats (costs, fuel CellData, vent/exchange rates).
