@@ -104,37 +104,32 @@
                 host.appendChild(p);
             }
 
-            let text;
+            let entries;
             try {
-                const resp = await fetch('changelog.txt', { cache: 'no-cache' });
+                const resp = await fetch('changelog.json', { cache: 'no-cache' });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                text = await resp.text();
+                entries = await resp.json();
             } catch (_err) {
                 setMessage('Failed to load changelog.', 'changelog-error');
                 return;
             }
 
-            const lines = text
-                .split(/\r?\n/)
-                .map((line) => line.trim())
-                .filter((line) => line.length > 0 && !line.startsWith('#'));
-
-            const entries = [];
-            for (const line of lines) {
-                const match = line.match(/^(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)\s*(?:\t|\|)\s*(.+)$/);
-                if (!match) continue;
-                const rawTs = match[1].replace('T', ' ');
-                let ts = rawTs;
-                if (/^\d{4}-\d{2}-\d{2}$/.test(ts)) ts += ' 00:00:00';
-                else if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}$/.test(ts)) ts += ':00';
-                const message = match[2];
-                entries.push({ ts, message });
+            if (!Array.isArray(entries)) {
+                setMessage('Invalid changelog format.', 'changelog-error');
+                return;
             }
 
             if (entries.length === 0) {
                 setMessage('No changelog entries found.', 'changelog-empty');
                 return;
             }
+
+            entries = entries
+                .map((entry) => ({
+                    ts: String(entry.ts ?? ''),
+                    message: String(entry.message ?? '')
+                }))
+                .filter((entry) => entry.ts && entry.message);
 
             entries.sort((a, b) => b.ts.localeCompare(a.ts));
             host.innerHTML = '';

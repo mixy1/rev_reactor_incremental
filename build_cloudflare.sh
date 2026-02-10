@@ -46,15 +46,33 @@ cp web/renderer.js "$DIST/"
 cp web/input.js "$DIST/"
 cp web/loader.js "$DIST/"
 cp web/changelog.js "$DIST/"
-# Copy user-facing changelog source
-if [ -f web/changelog.txt ]; then
-    cp web/changelog.txt "$DIST/changelog.txt"
-else
-    echo "Warning: web/changelog.txt not found, writing empty changelog"
-    : > "$DIST/changelog.txt"
-fi
 echo -n "$(git rev-parse HEAD)" > "$DIST/version.txt"
 cp web/mixy1.gif "$DIST/"
+
+echo "Generating changelog.json from git log..."
+"$PYTHON_BIN" -c '
+import json
+import subprocess
+
+proc = subprocess.run(
+    ["git", "log", "--pretty=format:%cI%x09%s"],
+    capture_output=True,
+    text=True,
+    check=True,
+)
+entries = []
+for line in proc.stdout.splitlines():
+    if not line.strip():
+        continue
+    if "\t" in line:
+        ts, message = line.split("\t", 1)
+    else:
+        ts, message = "", line.strip()
+    entries.append({"ts": ts, "message": message})
+print(json.dumps(entries, indent=2))
+' > "$DIST/changelog.json"
+CHANGELOG_COUNT=$("$PYTHON_BIN" -c "import json; print(len(json.load(open('$DIST/changelog.json'))))")
+echo "  $CHANGELOG_COUNT changelog entries"
 
 # 2. Patch index.html: change src-base to 'src/' for flat structure
 echo "Patching src-base for production..."

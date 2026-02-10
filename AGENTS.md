@@ -29,6 +29,6 @@
 - All new source code goes under `implementation/`.
 
 ## Web Changelog
-- Maintain `web/changelog.txt` as the user-facing changelog source.
-- Generate the site changelog UI from `web/changelog.txt`; do not hardcode changelog entries in `web/index.html`.
-- For meaningful changes, append concise timestamped entries to `web/changelog.txt` using `YYYY-MM-DD HH:MM:SS<TAB>message`.
+- Generate `changelog.json` from `git log` during site build.
+- Generate the site changelog UI from `changelog.json`; do not hardcode changelog entries in `web/index.html`.
+- Do not maintain manual changelog source files.

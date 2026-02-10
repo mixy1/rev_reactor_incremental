@@ -1,9 +1,5 @@
 /**
- * changelog.js — render site changelog from web/changelog.txt
- *
- * File format:
- *   YYYY-MM-DD<TAB>message
- *   YYYY-MM-DD|message
+ * changelog.js — render site changelog from changelog.json
  */
 
 (async function () {
@@ -18,29 +14,29 @@
         host.appendChild(p);
     }
 
-    let text;
+    let entries;
     try {
-        const resp = await fetch('changelog.txt', { cache: 'no-cache' });
+        const resp = await fetch('changelog.json', { cache: 'no-cache' });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        text = await resp.text();
+        entries = await resp.json();
     } catch (_err) {
         setMessage('Failed to load changelog.', 'changelog-error');
         return;
     }
 
-    const lines = text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0 && !line.startsWith('#'));
+    if (!Array.isArray(entries)) {
+        setMessage('Invalid changelog format.', 'changelog-error');
+        return;
+    }
 
     const groups = new Map();
-    for (const line of lines) {
-        const match = line.match(/^(\d{4}-\d{2}-\d{2})\s*(?:\t|\|)\s*(.+)$/);
-        if (!match) continue;
-        const date = match[1];
-        const message = match[2];
+    for (const entry of entries) {
+        const ts = String(entry.ts ?? '');
+        const message = String(entry.message ?? '');
+        if (!ts || !message) continue;
+        const date = ts.slice(0, 10);
         if (!groups.has(date)) groups.set(date, []);
-        groups.get(date).push(message);
+        groups.get(date).push({ ts, message });
     }
 
     if (groups.size === 0) {
@@ -60,9 +56,9 @@
         article.appendChild(dateEl);
 
         const ul = document.createElement('ul');
-        for (const message of groups.get(date)) {
+        for (const item of groups.get(date)) {
             const li = document.createElement('li');
-            li.textContent = message;
+            li.textContent = `${item.ts} ${item.message}`;
             ul.appendChild(li);
         }
         article.appendChild(ul);
@@ -70,4 +66,3 @@
         host.appendChild(article);
     }
 })();
-

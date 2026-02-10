@@ -1,2 +1,0 @@
-2026-02-11 02:32:09	migrate python project packaging to pyproject + uv workflow with uv-managed lockfile
-2026-02-10 23:59:32	cloudflare build: remove uv requirement in build script by auto-detecting python and hardening manifest generation
