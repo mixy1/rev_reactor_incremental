@@ -9,6 +9,8 @@ build/
 *.so
 
 # Virtual environments
+.venv/
+implementation/.venv/
 decompilation/env/
 
 # Decompilation — large binaries and generated outputs

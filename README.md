@@ -6,6 +6,8 @@ A reverse-engineered reimplementation of a Unity WebGL reactor idle game, built 
 
 ```
 rev_reactor/
+├── pyproject.toml           # Python package metadata + dependencies
+├── uv.lock                  # uv-resolved lockfile
 ├── implementation/          # Python reimplementation
 │   ├── src/
 │   │   ├── main.py          # Entry point, render loop, input handling
@@ -22,7 +24,6 @@ rev_reactor/
 │   │       ├── ui.py        # UI rendering (upgrades, prestige, tooltips)
 │   │       └── upgrades.py  # Upgrade manager
 │   ├── layout.json          # UI layout data extracted from binary
-│   └── requirements.txt     # Python dependencies
 ├── decompilation/           # RE artifacts and tools
 │   ├── build/               # Original game binaries (gitignored)
 │   ├── recovered/           # Extracted assets, metadata, scripts
@@ -37,12 +38,20 @@ rev_reactor/
 ## Running
 
 ```bash
-cd implementation
-pip install -r requirements.txt
-python src/main.py
+uv sync
+uv run rev-reactor
 ```
 
-Requires Python 3.10+ and raylib.
+Requires Python 3.10+.
+
+## Development Helpers
+
+```bash
+uv run python scripts/make_sprite_sheet.py
+uv run python scripts/split_sprite_sheet.py
+uv run pytest
+uv run ruff check .
+```
 
 ## Reverse Engineering
 

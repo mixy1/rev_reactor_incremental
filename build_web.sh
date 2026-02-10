@@ -52,12 +52,12 @@ fi
 
 # 2. Generate manifest.json (list of all PNG filenames)
 echo "Generating manifest.json..."
-(cd "$SPRITES_DST" && ls *.png 2>/dev/null) | python3 -c "
+(cd "$SPRITES_DST" && ls *.png 2>/dev/null) | uv run python -c "
 import sys, json
 names = [line.strip() for line in sys.stdin if line.strip()]
 print(json.dumps(sorted(names), indent=2))
 " > web/manifest.json
-SPRITE_COUNT=$(python3 -c "import json; print(len(json.load(open('web/manifest.json'))))")
+SPRITE_COUNT=$(uv run python -c "import json; print(len(json.load(open('web/manifest.json'))))")
 echo "  $SPRITE_COUNT sprites in manifest.json"
 
 # 3. Copy component_types.json to game/ directory for catalog loading
@@ -74,10 +74,10 @@ if [ "${1:-}" = "--serve" ]; then
     echo "Starting HTTP server at http://localhost:8080"
     echo "Open http://localhost:8080/web/ in your browser"
     echo "Press Ctrl+C to stop"
-    python3 -m http.server 8080
+    uv run python -m http.server 8080
 fi
 
 echo ""
 echo "Build complete. To run:"
-echo "  cd $(pwd) && python3 -m http.server 8080"
+echo "  cd $(pwd) && uv run python -m http.server 8080"
 echo "  Open http://localhost:8080/web/"

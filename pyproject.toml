@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rev-reactor"
+version = "0.1.0"
+description = "Reverse-engineered Python reimplementation of the Rev Reactor idle game."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "raylib",
+    "pyray",
+    "pillow",
+]
+
+[project.scripts]
+rev-reactor = "main:run"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "implementation/src"}
+py-modules = ["assets", "main", "raylib_compat"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["implementation/src"]
+include = ["game*"]
+
+[tool.setuptools.package-data]
+game = ["*.json"]

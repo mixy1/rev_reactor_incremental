@@ -6,14 +6,16 @@ This is a minimal Python + raylib prototype that uses **original sprite assets**
 
 - Code: `implementation/src`
 - Assets: `decompilation/recovered/recovered_assets`
+- Packaging: `pyproject.toml` + `uv.lock` at repo root
 
 ## Run (local)
 
-1. Install dependencies from `implementation/requirements.txt` (either `raylib` or `pyray` works; the code tries both).
+1. Sync dependencies with `uv`.
 2. Run:
 
 ```
-python implementation/src/main.py
+uv sync
+uv run rev-reactor
 ```
 
 ## Asset path override

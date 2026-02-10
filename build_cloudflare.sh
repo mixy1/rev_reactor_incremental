@@ -35,10 +35,13 @@ cp web/renderer.js "$DIST/"
 cp web/input.js "$DIST/"
 cp web/loader.js "$DIST/"
 cp web/changelog.js "$DIST/"
-# Generate changelog from git log (same format as old changelog.txt)
-# Unshallow if CI did a shallow clone so we get the full history
-git fetch --unshallow 2>/dev/null || true
-git log --format="%ad	%s" --date=format:"%Y-%m-%d %H:%M:%S" > "$DIST/changelog.txt"
+# Copy user-facing changelog source
+if [ -f web/changelog.txt ]; then
+    cp web/changelog.txt "$DIST/changelog.txt"
+else
+    echo "Warning: web/changelog.txt not found, writing empty changelog"
+    : > "$DIST/changelog.txt"
+fi
 echo -n "$(git rev-parse HEAD)" > "$DIST/version.txt"
 cp web/mixy1.gif "$DIST/"
 
@@ -66,12 +69,12 @@ else
 fi
 
 echo "Generating manifest.json..."
-(cd "$DIST/assets/sprites" && ls *.png 2>/dev/null) | python3 -c "
+(cd "$DIST/assets/sprites" && ls *.png 2>/dev/null) | uv run python -c "
 import sys, json
 names = [line.strip() for line in sys.stdin if line.strip()]
 print(json.dumps(sorted(names), indent=2))
 " > "$DIST/manifest.json"
-SPRITE_COUNT=$(python3 -c "import json; print(len(json.load(open('$DIST/manifest.json'))))")
+SPRITE_COUNT=$(uv run python -c "import json; print(len(json.load(open('$DIST/manifest.json'))))")
 echo "  $SPRITE_COUNT sprites"
 
 # 4. Copy Python source files
