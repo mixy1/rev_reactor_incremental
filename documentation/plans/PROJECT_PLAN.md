@@ -5,6 +5,7 @@
 - Reconstruct script structure (classes, fields, methods) from IL2CPP metadata.
 - Understand core gameplay systems and data flow.
 - Reimplement the game in Python with a deterministic core and a modern UI stack.
+- Translate the Python prototype to Rust + Bevy for long-term maintainability and deployment.
 
 ## Assumptions
 - Source project is lost; only WebGL build artifacts are available.
@@ -94,6 +95,24 @@ Steps:
 - [ ] Validate core numbers vs original (where recoverable).
 - [ ] Compare UI outputs (labels, numbers, states).
 - [ ] Iterate system-by-system to match gameplay feel.
+
+## Phase 7 — Rust + Bevy Translation
+Reference:
+- `documentation/plans/BEVY_TRANSLATION_PLAN.md`
+
+Deliverables:
+- [x] Concrete Python->Bevy migration plan with phases, risks, and milestones.
+- [ ] Rust workspace scaffold under `implementation/`.
+- [ ] Core simulation parity harness in Rust.
+- [ ] Bevy app shell and UI interaction parity.
+- [ ] Save/import compatibility parity (current JSON/base64 and legacy encrypted import path).
+
+Steps:
+- [x] Audit `implementation/src` module boundaries and migration dependencies.
+- [ ] Port data models/loaders (components, upgrades, saves) to Rust.
+- [ ] Port tick pipeline and placement/prestige rules to headless Rust simulation.
+- [ ] Port view state/input/render flow from raylib loop to Bevy states/systems.
+- [ ] Validate parity against captured Python fixtures before cutover.
 
 ## Risks / Unknowns
 - Full method mapping in wasm can be time-consuming.
