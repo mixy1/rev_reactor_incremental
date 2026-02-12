@@ -102,16 +102,16 @@ Reference:
 
 Deliverables:
 - [x] Concrete Python->Bevy migration plan with phases, risks, and milestones.
-- [ ] Rust workspace scaffold under `implementation/`.
-- [ ] Core simulation parity harness in Rust.
-- [ ] Bevy app shell and UI interaction parity.
+- [x] Rust workspace scaffold under `implementation_bevy/`.
+- [x] Core simulation harness in Rust with deterministic tests.
+- [x] Playable Bevy app shell with grid/HUD/input/save loop.
 - [ ] Save/import compatibility parity (current JSON/base64 and legacy encrypted import path).
 
 Steps:
 - [x] Audit `implementation/src` module boundaries and migration dependencies.
-- [ ] Port data models/loaders (components, upgrades, saves) to Rust.
-- [ ] Port tick pipeline and placement/prestige rules to headless Rust simulation.
-- [ ] Port view state/input/render flow from raylib loop to Bevy states/systems.
+- [x] Port data models/loaders (components, upgrades, saves) to Rust.
+- [ ] Port full tick pipeline and placement/prestige rules to headless Rust simulation.
+- [x] Port playable view state/input/render flow from raylib loop to Bevy states/systems.
 - [ ] Validate parity against captured Python fixtures before cutover.
 
 ## Risks / Unknowns
@@ -136,6 +136,7 @@ Steps:
 - [x] Updated Python simulation to match decoded tick pipeline.
 - [x] Added web iframe watchdog host (`index.html` + `game.html`) to recover from renderer hangs/crashes without clearing localStorage saves.
 - [x] Added host↔iframe postMessage save/theme bridge to support `sandbox="allow-scripts"` without `allow-same-origin`.
+- [x] Added `implementation_bevy/` with data loaders, deterministic core tests, playable Bevy grid loop, and save/load/autosave to `save.json`.
 - [ ] Implement upgrade system (stat bonuses, prestige).
 - [ ] Implement save/load (import/export).
 - [ ] Wire remaining UI elements (heat/power bars, info banner, stats panel).

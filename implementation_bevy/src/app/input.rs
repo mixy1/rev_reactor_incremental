@@ -27,6 +27,25 @@ pub fn handle_keyboard_controls(
     if keys.just_pressed(KeyCode::Digit5) {
         catalog.set_selection_index(&mut selection, 4);
     }
+    if keys.just_pressed(KeyCode::Digit6) {
+        catalog.set_selection_index(&mut selection, 5);
+    }
+    if keys.just_pressed(KeyCode::Digit7) {
+        catalog.set_selection_index(&mut selection, 6);
+    }
+    if keys.just_pressed(KeyCode::Digit8) {
+        catalog.set_selection_index(&mut selection, 7);
+    }
+    if keys.just_pressed(KeyCode::Digit9) {
+        catalog.set_selection_index(&mut selection, 8);
+    }
+
+    if keys.just_pressed(KeyCode::KeyQ) {
+        catalog.step_selection(&mut selection, -1);
+    }
+    if keys.just_pressed(KeyCode::KeyE) {
+        catalog.step_selection(&mut selection, 1);
+    }
 
     if keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::KeyP) {
         let next = match run_state.get() {

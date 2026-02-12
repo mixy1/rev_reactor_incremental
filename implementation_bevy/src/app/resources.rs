@@ -1,5 +1,7 @@
+use std::path::{Path, PathBuf};
+
 use bevy::prelude::*;
-use implementation_bevy::{ComponentKind, FuelKind, GridCoord, Simulation};
+use implementation_bevy::{ComponentKind, GridCoord, Simulation, load_component_types};
 
 #[derive(Resource, Debug, Clone)]
 pub struct RuntimeConfig {
@@ -11,6 +13,8 @@ pub struct RuntimeConfig {
     pub tick_hz: f32,
     pub start_money: f64,
     pub sell_refund_ratio: f64,
+    pub auto_save_interval_seconds: f32,
+    pub save_path: PathBuf,
 }
 
 impl Default for RuntimeConfig {
@@ -24,6 +28,8 @@ impl Default for RuntimeConfig {
             tick_hz: 10.0,
             start_money: 180.0,
             sell_refund_ratio: 0.5,
+            auto_save_interval_seconds: 10.0,
+            save_path: Path::new(env!("CARGO_MANIFEST_DIR")).join("save.json"),
         }
     }
 }
@@ -32,15 +38,16 @@ impl Default for RuntimeConfig {
 pub struct SessionState {
     pub simulation: Simulation,
     pub tick_timer: Timer,
+    pub autosave_timer: Timer,
+    pub last_save_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ComponentSpec {
-    pub label: &'static str,
+    pub index: usize,
+    pub name: String,
     pub kind: ComponentKind,
     pub cost: f64,
-    pub power_per_tick: f64,
-    pub heat_per_tick: f64,
     pub color: Color,
 }
 
@@ -51,47 +58,49 @@ pub struct ComponentCatalog {
 
 impl Default for ComponentCatalog {
     fn default() -> Self {
+        if let Ok(component_file) = load_component_types() {
+            let mut specs = Vec::new();
+            for definition in component_file.components {
+                let Some(kind) = ComponentKind::from_name(&definition.name) else {
+                    continue;
+                };
+                specs.push(ComponentSpec {
+                    index: definition.meta.field_index as usize,
+                    name: definition.name,
+                    kind,
+                    cost: definition.cost.max(0.0),
+                    color: color_from_name(&definition.sprite),
+                });
+            }
+
+            if !specs.is_empty() {
+                specs.sort_by_key(|spec| spec.index);
+                return Self { specs };
+            }
+        }
+
         Self {
             specs: vec![
                 ComponentSpec {
-                    label: "Fuel (Uranium)",
-                    kind: ComponentKind::Fuel(FuelKind::Uranium),
+                    index: 0,
+                    name: "Fuel1-1".to_string(),
+                    kind: ComponentKind::from_name("Fuel1-1").expect("fallback kind"),
                     cost: 24.0,
-                    power_per_tick: 2.6,
-                    heat_per_tick: 1.4,
                     color: Color::srgb(0.95, 0.78, 0.22),
                 },
                 ComponentSpec {
-                    label: "Vent T1",
-                    kind: ComponentKind::Vent { tier: 1 },
+                    index: 1,
+                    name: "Vent1".to_string(),
+                    kind: ComponentKind::from_name("Vent1").expect("fallback kind"),
                     cost: 14.0,
-                    power_per_tick: 0.0,
-                    heat_per_tick: -0.8,
                     color: Color::srgb(0.36, 0.76, 0.93),
                 },
                 ComponentSpec {
-                    label: "Coolant T1",
-                    kind: ComponentKind::Coolant { tier: 1 },
+                    index: 2,
+                    name: "Coolant1".to_string(),
+                    kind: ComponentKind::from_name("Coolant1").expect("fallback kind"),
                     cost: 18.0,
-                    power_per_tick: 0.0,
-                    heat_per_tick: -1.1,
                     color: Color::srgb(0.27, 0.58, 0.88),
-                },
-                ComponentSpec {
-                    label: "Capacitor T1",
-                    kind: ComponentKind::Capacitor { tier: 1 },
-                    cost: 20.0,
-                    power_per_tick: 1.1,
-                    heat_per_tick: 0.3,
-                    color: Color::srgb(0.57, 0.89, 0.54),
-                },
-                ComponentSpec {
-                    label: "Plating T1",
-                    kind: ComponentKind::Plating { tier: 1 },
-                    cost: 16.0,
-                    power_per_tick: 0.2,
-                    heat_per_tick: -0.2,
-                    color: Color::srgb(0.84, 0.53, 0.87),
                 },
             ],
         }
@@ -103,12 +112,27 @@ impl ComponentCatalog {
         self.specs.get(selection.index)
     }
 
+    pub fn len(&self) -> usize {
+        self.specs.len()
+    }
+
     pub fn set_selection_index(&self, selection: &mut SelectionState, index: usize) {
         if self.specs.is_empty() {
             selection.index = 0;
             return;
         }
         selection.index = index.min(self.specs.len() - 1);
+    }
+
+    pub fn step_selection(&self, selection: &mut SelectionState, delta: isize) {
+        if self.specs.is_empty() {
+            selection.index = 0;
+            return;
+        }
+        let len = self.specs.len() as isize;
+        let current = selection.index as isize;
+        let next = (current + delta).rem_euclid(len);
+        selection.index = next as usize;
     }
 
     pub fn spec_for_kind(&self, kind: ComponentKind) -> Option<&ComponentSpec> {
@@ -202,3 +226,15 @@ pub struct GridTile {
 
 #[derive(Component)]
 pub struct HudText;
+
+fn color_from_name(name: &str) -> Color {
+    let mut hash = 2166136261u32;
+    for byte in name.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(16777619);
+    }
+    let r = ((hash & 0xFF) as f32 / 255.0) * 0.45 + 0.35;
+    let g = (((hash >> 8) & 0xFF) as f32 / 255.0) * 0.45 + 0.35;
+    let b = (((hash >> 16) & 0xFF) as f32 / 255.0) * 0.45 + 0.35;
+    Color::srgb(r, g, b)
+}

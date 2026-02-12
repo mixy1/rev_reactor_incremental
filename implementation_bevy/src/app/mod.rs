@@ -35,8 +35,10 @@ impl Plugin for ReactorAppPlugin {
                     input::handle_keyboard_controls,
                     input::update_hovered_cell,
                     input::emit_mouse_actions,
+                    simulation::handle_save_hotkeys,
                     simulation::apply_grid_actions,
                     simulation::tick_simulation.run_if(in_state(SimRunState::Running)),
+                    simulation::autosave_session,
                     view::refresh_grid_visuals,
                     view::refresh_hud,
                 )

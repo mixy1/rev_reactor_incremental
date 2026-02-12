@@ -78,7 +78,7 @@ pub fn refresh_hud(
 
     let selected = catalog
         .selected(&selection)
-        .map(|spec| spec.label)
+        .map(|spec| spec.name.as_str())
         .unwrap_or("None");
 
     let run_label = match run_state.get() {
@@ -91,14 +91,23 @@ pub fn refresh_hud(
         .map(|coord| format!("{},{}", coord.x, coord.y))
         .unwrap_or_else(|| "-".to_string());
 
+    let save_line = session
+        .last_save_error
+        .as_deref()
+        .map(|msg| format!("Save: {msg}"))
+        .unwrap_or_else(|| "Save: OK (F5 save, F9 load, autosave on)".to_string());
+
     *hud = Text::new(format!(
-        "Money: ${:.1}  Power: {:.1}  Heat: {:.1}  Tick: {}\nMode: {}  Selected: {}  Hover: {}\n1-5 switch component, Left click place, Right click sell, Space/P pause",
+        "Money: ${:.1}  Power: {:.1}  Heat: {:.1}  Tick: {}\nMode: {}  Selected: {} ({}/{})  Hover: {}\n1-9 quick select, Q/E cycle, Left place, Right sell, Space/P pause\n{}",
         session.simulation.resources.money,
         session.simulation.resources.power,
         session.simulation.resources.heat,
         session.simulation.tick_index,
         run_label,
         selected,
+        selection.index.saturating_add(1),
+        catalog.len(),
         hovered_label,
+        save_line,
     ));
 }

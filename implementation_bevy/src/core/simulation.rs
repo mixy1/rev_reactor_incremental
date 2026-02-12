@@ -86,9 +86,22 @@ impl Simulation {
         Ok(())
     }
 
+    pub fn clear_all_components(&mut self) {
+        self.components.clear();
+        self.grid = ReactorGrid::new(self.grid.width, self.grid.height, self.grid.layers);
+        self.next_component_id = 1;
+        self.prepare_multipliers();
+    }
+
     pub fn component_at(&self, coord: GridCoord) -> Option<&PlacedComponent> {
         self.components
             .iter()
+            .find(|component| component.coord == coord)
+    }
+
+    pub fn component_at_mut(&mut self, coord: GridCoord) -> Option<&mut PlacedComponent> {
+        self.components
+            .iter_mut()
             .find(|component| component.coord == coord)
     }
 

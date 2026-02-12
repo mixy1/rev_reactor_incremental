@@ -14,3 +14,4 @@
 - `prestige-system.md` — Prestige mechanics and upgrade data
 - `extreme-components.md` — Tier 6 (Extreme) component special behaviors: ExtremeCoolant CantLoseHeat + radius-2 heat absorption, ExtremeCapacitor auto-sell heat gen
 - `experimental-fuel-cells.md` — Experimental fuel (Fuel 7-11) special behaviors: Protium depletion boost, Monastium density penalty, Kymium cosine pulsation, Discurrium 4-pulse stat, Stavrium row+column distribution
+- `bevy-implementation-status.md` — Current state of `implementation_bevy/` runtime, completed systems, controls, and parity gaps

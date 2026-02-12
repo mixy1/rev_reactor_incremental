@@ -14,6 +14,6 @@ pub use model::{
     PlacedComponent, ReactorGrid,
 };
 pub use save::{
-    SaveComponent, SaveData, SaveStore, export_to_base64, import_from_base64,
-    load_from_json_string, save_to_json_string,
+    SaveComponent, SaveData, SaveStore, apply_save_data, export_to_base64, import_from_base64,
+    load_from_json_string, save_data_from_simulation, save_to_json_string,
 };

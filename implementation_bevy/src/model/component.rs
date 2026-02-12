@@ -158,6 +158,52 @@ impl ComponentKind {
             Self::GenericInfinity => ComponentStats::zero(),
         }
     }
+
+    pub fn canonical_name(self) -> String {
+        match self {
+            Self::Fuel(fuel) => fuel.canonical_name().to_string(),
+            Self::Vent { tier } => format!("Vent{tier}"),
+            Self::Coolant { tier } => format!("Coolant{tier}"),
+            Self::Capacitor { tier } => format!("Capacitor{tier}"),
+            Self::Reflector { tier } => format!("Reflector{tier}"),
+            Self::Plating { tier } => format!("Plate{tier}"),
+            Self::Inlet { tier } => format!("Inlet{tier}"),
+            Self::Outlet { tier } => format!("Outlet{tier}"),
+            Self::Exchanger { tier } => format!("Exchanger{tier}"),
+            Self::Clock => "Clock".to_string(),
+            Self::GenericHeat => "GenericHeat".to_string(),
+            Self::GenericPower => "GenericPower".to_string(),
+            Self::GenericInfinity => "GenericInfinity".to_string(),
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if let Some(fuel_kind) = FuelKind::from_name(trimmed) {
+            return Some(Self::Fuel(fuel_kind));
+        }
+
+        parse_tier_component(trimmed, "Vent", |tier| Self::Vent { tier })
+            .or_else(|| parse_tier_component(trimmed, "Coolant", |tier| Self::Coolant { tier }))
+            .or_else(|| parse_tier_component(trimmed, "Capacitor", |tier| Self::Capacitor { tier }))
+            .or_else(|| parse_tier_component(trimmed, "Reflector", |tier| Self::Reflector { tier }))
+            .or_else(|| parse_tier_component(trimmed, "Plate", |tier| Self::Plating { tier }))
+            .or_else(|| parse_tier_component(trimmed, "Plating", |tier| Self::Plating { tier }))
+            .or_else(|| parse_tier_component(trimmed, "Inlet", |tier| Self::Inlet { tier }))
+            .or_else(|| parse_tier_component(trimmed, "Outlet", |tier| Self::Outlet { tier }))
+            .or_else(|| parse_tier_component(trimmed, "Exchanger", |tier| Self::Exchanger { tier }))
+            .or_else(|| match trimmed {
+                "Clock" => Some(Self::Clock),
+                "GenericHeat" => Some(Self::GenericHeat),
+                "GenericPower" => Some(Self::GenericPower),
+                "GenericInfinity" => Some(Self::GenericInfinity),
+                _ => None,
+            })
+    }
 }
 
 impl FuelKind {
@@ -183,6 +229,54 @@ impl FuelKind {
             ..ComponentStats::zero()
         }
     }
+
+    pub const fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Uranium => "Fuel1-1",
+            Self::Plutonium => "Fuel2-1",
+            Self::Thorium => "Fuel3-1",
+            Self::Seaborgium => "Fuel4-1",
+            Self::Dolorium => "Fuel5-1",
+            Self::Nefastium => "Fuel6-1",
+            Self::Protium => "Fuel7-1",
+            Self::Monastium => "Fuel8-1",
+            Self::Kymium => "Fuel9-1",
+            Self::Discurrium => "Fuel10-1",
+            Self::Stavrium => "Fuel11-1",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        let Some(rest) = name.strip_prefix("Fuel") else {
+            return None;
+        };
+        let tier_str = rest.split('-').next()?;
+        let tier = tier_str.parse::<u8>().ok()?;
+        Some(match tier {
+            1 => Self::Uranium,
+            2 => Self::Plutonium,
+            3 => Self::Thorium,
+            4 => Self::Seaborgium,
+            5 => Self::Dolorium,
+            6 => Self::Nefastium,
+            7 => Self::Protium,
+            8 => Self::Monastium,
+            9 => Self::Kymium,
+            10 => Self::Discurrium,
+            11 => Self::Stavrium,
+            _ => return None,
+        })
+    }
+}
+
+fn parse_tier_component(
+    value: &str,
+    prefix: &str,
+    builder: impl FnOnce(u8) -> ComponentKind,
+) -> Option<ComponentKind> {
+    let tier_str = value.strip_prefix(prefix)?;
+    let tier = tier_str.parse::<u8>().ok()?;
+    Some(builder(tier))
 }
 
 #[derive(Debug, Clone, PartialEq)]

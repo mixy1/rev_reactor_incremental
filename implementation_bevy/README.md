@@ -25,6 +25,7 @@ The crate now includes:
   - HUD text (money/power/heat/tick + selected component)
   - place/remove interactions
   - pause/run toggle
+  - save/load hotkeys + autosave
 - Deterministic engine-agnostic simulation core (`src/core/*`)
 - Engine-agnostic models (`src/model/*`)
 - Data loaders for component/upgrade JSON (`src/data/*`)
@@ -32,14 +33,13 @@ The crate now includes:
 
 ## App Controls
 
-- `1`: Select `Fuel (Uranium)`
-- `2`: Select `Vent T1`
-- `3`: Select `Coolant T1`
-- `4`: Select `Capacitor T1`
-- `5`: Select `Plating T1`
+- `1..9`: quick-select first 9 components from loaded catalog
+- `Q` / `E`: previous/next component selection
 - `Left Click` on a grid cell: place selected component (if affordable and empty)
 - `Right Click` on a grid cell: remove/sell component (50% refund)
 - `Space` or `P`: toggle simulation run/pause
+- `F5`: save immediately to `implementation_bevy/save.json`
+- `F9`: load from `implementation_bevy/save.json`
 
 ## Layout
 

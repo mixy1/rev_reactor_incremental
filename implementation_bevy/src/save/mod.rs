@@ -1,15 +1,18 @@
+mod bridge;
 mod codec;
 mod model;
 
+pub use bridge::{apply_save_data, save_data_from_simulation};
 pub use codec::{export_to_base64, import_from_base64, load_from_json_string, save_to_json_string};
 pub use model::{SaveComponent, SaveData, SaveStore};
 
 #[cfg(test)]
 mod tests {
     use super::{
-        SaveComponent, SaveData, SaveStore, export_to_base64, import_from_base64,
-        load_from_json_string, save_to_json_string,
+        SaveComponent, SaveData, SaveStore, apply_save_data, export_to_base64, import_from_base64,
+        load_from_json_string, save_data_from_simulation, save_to_json_string,
     };
+    use crate::{ComponentKind, FuelKind, GridCoord, Simulation};
 
     fn sample_save() -> SaveData {
         SaveData {
@@ -76,5 +79,36 @@ mod tests {
         let restored = import_from_base64(&encoded).expect("save should import from base64");
 
         assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn simulation_bridge_round_trip() {
+        let mut sim = Simulation::default();
+        sim.resources.money = 222.0;
+        sim.resources.power = 10.0;
+        sim.resources.heat = 4.5;
+        sim.place_component(
+            GridCoord::new(2, 3, 0),
+            ComponentKind::Fuel(FuelKind::Uranium),
+        )
+        .expect("should place component");
+        if let Some(component) = sim.component_at_mut(GridCoord::new(2, 3, 0)) {
+            component.heat = 3.25;
+            component.durability = 77.0;
+        }
+
+        let save = save_data_from_simulation(&sim, 4, 1);
+        let mut restored = Simulation::default();
+        apply_save_data(&mut restored, &save).expect("save apply should succeed");
+
+        assert_eq!(restored.resources.money, 222.0);
+        assert_eq!(restored.resources.power, 10.0);
+        assert_eq!(restored.resources.heat, 4.5);
+        let component = restored
+            .component_at(GridCoord::new(2, 3, 0))
+            .expect("component should exist");
+        assert_eq!(component.kind, ComponentKind::Fuel(FuelKind::Uranium));
+        assert!((component.heat - 3.25).abs() <= f64::EPSILON);
+        assert!((component.durability - 77.0).abs() <= f64::EPSILON);
     }
 }
