@@ -173,6 +173,7 @@ main {
     height: 630px;
     border: 1px solid var(--border);
     background: #000;
+    overflow: hidden;
 }
 
 .game-watchdog-status {
@@ -201,8 +202,34 @@ main {
     border-radius: 3px;
 }
 
+.game-embed-html,
 .game-embed-body {
+    width: 900px;
+    height: 630px;
     overflow: hidden;
+}
+
+.game-embed-body {
+    min-height: 0;
+}
+
+.game-embed-body main {
+    width: 900px;
+    height: 630px;
+    min-height: 0;
+    padding: 0;
+    display: block;
+}
+
+.game-embed-body .game-shell {
+    width: 900px;
+    height: 630px;
+}
+
+.game-embed-body #game-canvas {
+    width: 900px;
+    height: 630px;
+    border: 0;
 }
 
 /* ── Loading screen ─────────────────────────────────────── */
