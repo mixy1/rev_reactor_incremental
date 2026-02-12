@@ -291,6 +291,8 @@ pub struct PlacedComponent {
     pub last_heat: f64,
     pub pulse_count: u32,
     pub depleted: bool,
+    pub source_name: String,
+    pub stats_override: Option<ComponentStats>,
 }
 
 impl PlacedComponent {
@@ -316,11 +318,13 @@ impl PlacedComponent {
             last_heat: 0.0,
             pulse_count: 0,
             depleted: false,
+            source_name: kind.canonical_name(),
+            stats_override: None,
         }
     }
 
     pub fn stats(&self) -> ComponentStats {
-        self.kind.stats()
+        self.stats_override.unwrap_or_else(|| self.kind.stats())
     }
 
     pub fn is_fuel(&self) -> bool {

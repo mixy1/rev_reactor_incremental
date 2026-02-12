@@ -2,13 +2,13 @@ use bevy::prelude::*;
 
 use super::resources::{
     ComponentCatalog, GridLayout, GridTile, HoveredCell, HudText, RuntimeConfig, SelectionState,
-    SessionState,
+    SessionState, SpriteCatalog,
 };
 use super::state::SimRunState;
 
 const EMPTY_TILE_COLOR: Color = Color::srgb(0.11, 0.13, 0.16);
 const HOVER_TILE_COLOR: Color = Color::srgb(0.24, 0.27, 0.31);
-const HOVER_OCCUPIED_COLOR: Color = Color::srgb(0.92, 0.95, 0.98);
+const HOVER_OCCUPIED_TINT: Color = Color::srgba(1.0, 1.0, 1.0, 0.9);
 
 pub fn spawn_grid(mut commands: Commands, config: Res<RuntimeConfig>, layout: Res<GridLayout>) {
     for y in 0..config.grid_height {
@@ -27,20 +27,41 @@ pub fn spawn_grid(mut commands: Commands, config: Res<RuntimeConfig>, layout: Re
 pub fn refresh_grid_visuals(
     session: Res<SessionState>,
     catalog: Res<ComponentCatalog>,
+    sprites: Res<SpriteCatalog>,
+    layout: Res<GridLayout>,
     hovered: Res<HoveredCell>,
     mut tiles: Query<(&GridTile, &mut Sprite)>,
 ) {
     for (tile, mut sprite) in &mut tiles {
-        let occupied_kind = session.simulation.grid.get(tile.coord);
+        let is_hovered = hovered.0 == Some(tile.coord);
 
-        sprite.color = match (occupied_kind, hovered.0 == Some(tile.coord)) {
-            (Some(_kind), true) => HOVER_OCCUPIED_COLOR,
-            (Some(kind), false) => catalog
-                .spec_for_kind(kind)
+        if let Some(slot) = session.placed_spec_by_coord.get(&tile.coord).copied() {
+            if let Some(handle) = sprites.get(slot) {
+                sprite.image = handle.clone();
+                sprite.custom_size = Some(Vec2::new(layout.cell_size, layout.cell_size));
+                sprite.color = if is_hovered {
+                    HOVER_OCCUPIED_TINT
+                } else {
+                    Color::WHITE
+                };
+                continue;
+            }
+
+            sprite.image = Handle::default();
+            sprite.custom_size = Some(Vec2::new(layout.cell_size, layout.cell_size));
+            sprite.color = catalog
+                .spec_for_slot(slot)
                 .map(|entry| entry.color)
-                .unwrap_or(Color::srgb(0.48, 0.48, 0.48)),
-            (None, true) => HOVER_TILE_COLOR,
-            (None, false) => EMPTY_TILE_COLOR,
+                .unwrap_or(Color::srgb(0.48, 0.48, 0.48));
+            continue;
+        }
+
+        sprite.image = Handle::default();
+        sprite.custom_size = Some(Vec2::new(layout.cell_size, layout.cell_size));
+        sprite.color = if is_hovered {
+            HOVER_TILE_COLOR
+        } else {
+            EMPTY_TILE_COLOR
         };
     }
 }

@@ -33,15 +33,23 @@ pub fn apply_grid_actions(
                     .place_component(coord, selected_spec.kind)
                     .is_ok()
                 {
+                    if let Some(component) = session.simulation.component_at_mut(coord) {
+                        component.stats_override = Some(selected_spec.stats);
+                        component.source_name = selected_spec.name.clone();
+                    }
+                    session
+                        .placed_spec_by_coord
+                        .insert(coord, selected_spec.slot);
                     spend_money(&mut session, selected_spec.cost);
                 }
             }
             GridAction::Remove(coord) => {
-                let Some(existing_kind) = session.simulation.grid.get(coord) else {
+                let Some(slot) = session.placed_spec_by_coord.get(&coord).copied() else {
                     continue;
                 };
                 if session.simulation.remove_component(coord).is_ok() {
-                    let refund = catalog.sell_value(existing_kind, config.sell_refund_ratio);
+                    session.placed_spec_by_coord.remove(&coord);
+                    let refund = catalog.sell_value_for_slot(slot, config.sell_refund_ratio);
                     session.simulation.resources.add_money(refund);
                 }
             }
@@ -78,6 +86,7 @@ pub fn handle_save_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     config: Res<RuntimeConfig>,
     mut selection: ResMut<SelectionState>,
+    catalog: Res<ComponentCatalog>,
     mut session: ResMut<SessionState>,
     mut next_run_state: ResMut<NextState<SimRunState>>,
 ) {
@@ -89,7 +98,7 @@ pub fn handle_save_hotkeys(
     }
 
     if keys.just_pressed(KeyCode::F9) {
-        match load_session_from_disk(&mut session, &config) {
+        match load_session_from_disk(&mut session, &catalog, &config) {
             Ok(selected_index) => {
                 if selected_index >= 0 {
                     selection.index = selected_index as usize;
@@ -144,11 +153,38 @@ fn save_session_to_disk(
 
 fn load_session_from_disk(
     session: &mut SessionState,
+    catalog: &ComponentCatalog,
     config: &RuntimeConfig,
 ) -> Result<i32, String> {
     let raw = fs::read_to_string(&config.save_path)
         .map_err(|err| format!("failed reading save {}: {err}", config.save_path.display()))?;
     let save_data = load_from_json_string(&raw).map_err(|err| err.to_string())?;
     apply_save_data(&mut session.simulation, &save_data).map_err(|err| err.to_string())?;
+
+    session.placed_spec_by_coord.clear();
+    for component in &mut session.simulation.components {
+        if let Some((slot, spec)) = catalog
+            .all_specs()
+            .iter()
+            .enumerate()
+            .find(|(_, spec)| spec.name == component.source_name)
+        {
+            component.stats_override = Some(spec.stats);
+            component.source_name = spec.name.clone();
+            session.placed_spec_by_coord.insert(component.coord, slot);
+            continue;
+        }
+        if let Some((slot, spec)) = catalog
+            .all_specs()
+            .iter()
+            .enumerate()
+            .find(|(_, spec)| spec.kind == component.kind)
+        {
+            component.stats_override = Some(spec.stats);
+            component.source_name = spec.name.clone();
+            session.placed_spec_by_coord.insert(component.coord, slot);
+        }
+    }
+
     Ok(save_data.selected_component_index)
 }

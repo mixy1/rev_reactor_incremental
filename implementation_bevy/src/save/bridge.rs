@@ -13,7 +13,7 @@ pub fn save_data_from_simulation(
         .components
         .iter()
         .map(|component| SaveComponent {
-            name: component.kind.canonical_name(),
+            name: component.source_name.clone(),
             heat: component.heat,
             durability: component.durability,
             depleted: component.depleted,
@@ -90,6 +90,7 @@ pub fn apply_save_data(sim: &mut Simulation, save: &SaveData) -> Result<()> {
             )
         })?;
         if let Some(component) = sim.component_at_mut(coord) {
+            component.source_name = entry.name.clone();
             component.heat = entry.heat.max(0.0);
             component.durability = entry.durability.max(0.0);
             component.depleted = entry.depleted || component.durability <= 0.0;

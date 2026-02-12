@@ -6,7 +6,7 @@
   - `implementation/src/game/upgrade_data.json`
 - Save layer supports JSON + base64 codecs and simulation bridge conversion.
 - App layer currently provides:
-  - reactor grid rendering
+  - reactor grid rendering using recovered component sprites
   - HUD (money/power/heat/tick/selection)
   - placement/removal input
   - run/pause

@@ -1,7 +1,11 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use implementation_bevy::{ComponentKind, GridCoord, Simulation, load_component_types};
+use implementation_bevy::{
+    ComponentKind, ComponentStats, ComponentTypeDefinition, GridCoord, Simulation,
+    load_component_types,
+};
 
 #[derive(Resource, Debug, Clone)]
 pub struct RuntimeConfig {
@@ -40,13 +44,16 @@ pub struct SessionState {
     pub tick_timer: Timer,
     pub autosave_timer: Timer,
     pub last_save_error: Option<String>,
+    pub placed_spec_by_coord: HashMap<GridCoord, usize>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ComponentSpec {
-    pub index: usize,
+    pub slot: usize,
     pub name: String,
+    pub sprite_name: String,
     pub kind: ComponentKind,
+    pub stats: ComponentStats,
     pub cost: f64,
     pub color: Color,
 }
@@ -59,51 +66,54 @@ pub struct ComponentCatalog {
 impl Default for ComponentCatalog {
     fn default() -> Self {
         if let Ok(component_file) = load_component_types() {
-            let mut specs = Vec::new();
+            let mut raw_specs = Vec::new();
             for definition in component_file.components {
-                let Some(kind) = ComponentKind::from_name(&definition.name) else {
+                let Some(kind) = ComponentKind::from_name(&definition.sprite) else {
                     continue;
                 };
-                specs.push(ComponentSpec {
-                    index: definition.meta.field_index as usize,
-                    name: definition.name,
-                    kind,
-                    cost: definition.cost.max(0.0),
-                    color: color_from_name(&definition.sprite),
-                });
+                raw_specs.push((
+                    definition.meta.field_index as usize,
+                    ComponentSpec {
+                        slot: 0,
+                        name: definition.sprite.clone(),
+                        sprite_name: definition.sprite.clone(),
+                        kind,
+                        stats: component_stats_from_definition(&definition),
+                        cost: definition.cost.max(0.0),
+                        color: color_from_name(&definition.name),
+                    },
+                ));
             }
 
-            if !specs.is_empty() {
-                specs.sort_by_key(|spec| spec.index);
+            if !raw_specs.is_empty() {
+                raw_specs.sort_by_key(|(field_index, _)| *field_index);
+                let specs = raw_specs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(slot, (_, mut spec))| {
+                        spec.slot = slot;
+                        spec
+                    })
+                    .collect();
                 return Self { specs };
             }
         }
 
-        Self {
-            specs: vec![
-                ComponentSpec {
-                    index: 0,
-                    name: "Fuel1-1".to_string(),
-                    kind: ComponentKind::from_name("Fuel1-1").expect("fallback kind"),
-                    cost: 24.0,
-                    color: Color::srgb(0.95, 0.78, 0.22),
-                },
-                ComponentSpec {
-                    index: 1,
-                    name: "Vent1".to_string(),
-                    kind: ComponentKind::from_name("Vent1").expect("fallback kind"),
-                    cost: 14.0,
-                    color: Color::srgb(0.36, 0.76, 0.93),
-                },
-                ComponentSpec {
-                    index: 2,
-                    name: "Coolant1".to_string(),
-                    kind: ComponentKind::from_name("Coolant1").expect("fallback kind"),
-                    cost: 18.0,
-                    color: Color::srgb(0.27, 0.58, 0.88),
-                },
-            ],
+        let fallback_names = ["Fuel1-1", "Vent1", "Coolant1", "Capacitor1", "Plate1"];
+        let mut specs = Vec::new();
+        for (slot, name) in fallback_names.into_iter().enumerate() {
+            let kind = ComponentKind::from_name(name).expect("fallback kind");
+            specs.push(ComponentSpec {
+                slot,
+                name: name.to_string(),
+                sprite_name: name.to_string(),
+                kind,
+                stats: kind.stats(),
+                cost: 10.0,
+                color: color_from_name(name),
+            });
         }
+        Self { specs }
     }
 }
 
@@ -114,6 +124,14 @@ impl ComponentCatalog {
 
     pub fn len(&self) -> usize {
         self.specs.len()
+    }
+
+    pub fn all_specs(&self) -> &[ComponentSpec] {
+        &self.specs
+    }
+
+    pub fn spec_for_slot(&self, slot: usize) -> Option<&ComponentSpec> {
+        self.specs.get(slot)
     }
 
     pub fn set_selection_index(&self, selection: &mut SelectionState, index: usize) {
@@ -135,15 +153,11 @@ impl ComponentCatalog {
         selection.index = next as usize;
     }
 
-    pub fn spec_for_kind(&self, kind: ComponentKind) -> Option<&ComponentSpec> {
-        self.specs.iter().find(|entry| entry.kind == kind)
-    }
-
-    pub fn sell_value(&self, kind: ComponentKind, refund_ratio: f64) -> f64 {
-        let ratio = refund_ratio.clamp(0.0, 1.0);
-        self.spec_for_kind(kind)
-            .map(|spec| spec.cost * ratio)
-            .unwrap_or(0.0)
+    pub fn sell_value_for_slot(&self, slot: usize, refund_ratio: f64) -> f64 {
+        let Some(spec) = self.spec_for_slot(slot) else {
+            return 0.0;
+        };
+        spec.cost * refund_ratio.clamp(0.0, 1.0)
     }
 }
 
@@ -227,6 +241,21 @@ pub struct GridTile {
 #[derive(Component)]
 pub struct HudText;
 
+#[derive(Resource, Default)]
+pub struct SpriteCatalog {
+    handles_by_slot: HashMap<usize, Handle<Image>>,
+}
+
+impl SpriteCatalog {
+    pub fn insert(&mut self, slot: usize, handle: Handle<Image>) {
+        self.handles_by_slot.insert(slot, handle);
+    }
+
+    pub fn get(&self, slot: usize) -> Option<&Handle<Image>> {
+        self.handles_by_slot.get(&slot)
+    }
+}
+
 fn color_from_name(name: &str) -> Color {
     let mut hash = 2166136261u32;
     for byte in name.as_bytes() {
@@ -237,4 +266,33 @@ fn color_from_name(name: &str) -> Color {
     let g = (((hash >> 8) & 0xFF) as f32 / 255.0) * 0.45 + 0.35;
     let b = (((hash >> 16) & 0xFF) as f32 / 255.0) * 0.45 + 0.35;
     Color::srgb(r, g, b)
+}
+
+fn component_stats_from_definition(definition: &ComponentTypeDefinition) -> ComponentStats {
+    let mut stats = ComponentStats::zero();
+    if let Some(cell_data) = &definition.cell_data {
+        stats.energy_per_pulse = cell_data.energy_per_pulse;
+        stats.heat_per_pulse = cell_data.heat_per_pulse;
+        let pulses = (cell_data.pulses_per_core * f64::from(cell_data.number_of_cores))
+            .max(1.0)
+            .round() as u32;
+        stats.pulses_produced = pulses.max(1);
+    }
+
+    stats.max_durability = definition.max_durability.unwrap_or(0.0);
+    stats.heat_capacity = definition.heat_capacity.unwrap_or(0.0);
+    stats.reactor_heat_capacity_increase = definition.reactor_heat_capacity_increase.unwrap_or(0.0);
+    stats.reactor_power_capacity_increase =
+        definition.reactor_power_capacity_increase.unwrap_or(0.0);
+    stats.reflector_bonus_pct = definition.reflects_pulses.unwrap_or(0.0);
+
+    if let Some(heat_data) = &definition.heat_data {
+        stats.self_vent_rate = heat_data.self_vent_rate;
+        stats.reactor_vent_rate = heat_data.reactor_vent_rate;
+        if heat_data.neighbor_affects {
+            stats.coolant_absorb_rate = heat_data.reactor_vent_rate;
+        }
+    }
+
+    stats
 }

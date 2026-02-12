@@ -3,7 +3,9 @@ use std::fs;
 use bevy::prelude::*;
 use implementation_bevy::{Simulation, apply_save_data, load_from_json_string};
 
-use super::resources::{ComponentCatalog, GridLayout, RuntimeConfig, SelectionState, SessionState};
+use super::resources::{
+    ComponentCatalog, GridLayout, RuntimeConfig, SelectionState, SessionState, SpriteCatalog,
+};
 use super::state::{AppPhase, SimRunState};
 
 pub fn spawn_camera(mut commands: Commands) {
@@ -12,6 +14,7 @@ pub fn spawn_camera(mut commands: Commands) {
 
 pub fn bootstrap_session(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     config: Res<RuntimeConfig>,
     catalog: Res<ComponentCatalog>,
     mut selection: ResMut<SelectionState>,
@@ -44,6 +47,39 @@ pub fn bootstrap_session(
     let selection_index = selection.index;
     catalog.set_selection_index(&mut selection, selection_index);
 
+    let mut sprite_catalog = SpriteCatalog::default();
+    for spec in catalog.all_specs() {
+        let path = format!("sprites/{}.png", spec.sprite_name);
+        let handle: Handle<Image> = asset_server.load(path);
+        sprite_catalog.insert(spec.slot, handle);
+    }
+    commands.insert_resource(sprite_catalog);
+
+    let mut placed_spec_by_coord = std::collections::HashMap::new();
+    for component in &mut simulation.components {
+        if let Some((slot, spec)) = catalog
+            .all_specs()
+            .iter()
+            .enumerate()
+            .find(|(_, spec)| spec.name == component.source_name)
+        {
+            component.stats_override = Some(spec.stats);
+            component.source_name = spec.name.clone();
+            placed_spec_by_coord.insert(component.coord, slot);
+            continue;
+        }
+        if let Some((slot, spec)) = catalog
+            .all_specs()
+            .iter()
+            .enumerate()
+            .find(|(_, spec)| spec.kind == component.kind)
+        {
+            component.stats_override = Some(spec.stats);
+            component.source_name = spec.name.clone();
+            placed_spec_by_coord.insert(component.coord, slot);
+        }
+    }
+
     commands.insert_resource(GridLayout::new(
         config.grid_width,
         config.grid_height,
@@ -59,6 +95,7 @@ pub fn bootstrap_session(
             TimerMode::Repeating,
         ),
         last_save_error: None,
+        placed_spec_by_coord,
     });
 
     next_phase.set(AppPhase::InGame);

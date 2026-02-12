@@ -21,7 +21,7 @@ cargo run
 The crate now includes:
 
 - A playable Bevy app loop (`src/app/*`) with:
-  - grid rendering
+  - grid rendering with real recovered sprite assets
   - HUD text (money/power/heat/tick + selected component)
   - place/remove interactions
   - pause/run toggle
@@ -30,6 +30,10 @@ The crate now includes:
 - Engine-agnostic models (`src/model/*`)
 - Data loaders for component/upgrade JSON (`src/data/*`)
 - Save codecs for JSON + base64 round-trip (`src/save/*`)
+
+Sprites are loaded from:
+
+- `decompilation/recovered/recovered_assets/sprites/*.png`
 
 ## App Controls
 
