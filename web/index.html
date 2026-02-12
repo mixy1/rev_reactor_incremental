@@ -37,7 +37,7 @@
                 data-base-src="game.html"
                 loading="eager"
                 scrolling="no"
-                sandbox="allow-scripts allow-same-origin"
+                sandbox="allow-scripts"
                 referrerpolicy="same-origin"
             ></iframe>
             <p id="watchdog-status" class="game-watchdog-status" aria-live="polite"></p>
@@ -144,6 +144,7 @@
             const frame = document.getElementById('game-frame');
             const themeBtn = document.getElementById('theme-toggle');
             const statusEl = document.getElementById('watchdog-status');
+            const SAVE_KEY = 'rev_reactor_save';
 
             const CHECK_EVERY_MS = 1000;
             const HEARTBEAT_TIMEOUT_MS = 6000;
@@ -174,6 +175,35 @@
                 );
             }
 
+            function readSavedGame() {
+                try {
+                    return localStorage.getItem(SAVE_KEY);
+                } catch (_err) {
+                    return null;
+                }
+            }
+
+            function writeSavedGame(saveText) {
+                if (typeof saveText !== 'string') return;
+                try {
+                    localStorage.setItem(SAVE_KEY, saveText);
+                } catch (err) {
+                    console.warn('Failed to write save data from iframe:', err);
+                }
+            }
+
+            function postHostStateToGame() {
+                if (!frame.contentWindow) return;
+                frame.contentWindow.postMessage(
+                    {
+                        type: 'rev-reactor-host-state',
+                        theme: currentTheme,
+                        saveText: readSavedGame(),
+                    },
+                    '*'
+                );
+            }
+
             function setTheme(theme) {
                 currentTheme = theme === 'decayed' ? 'decayed' : 'default';
                 localStorage.setItem('sprite-theme', currentTheme);
@@ -198,12 +228,22 @@
                 if (ev.source !== frame.contentWindow) return;
                 const data = ev.data;
                 if (!data || typeof data !== 'object') return;
-                if (data.type !== 'rev-reactor-beat') return;
+                if (data.type === 'rev-reactor-beat') {
+                    lastBeat = Date.now();
+                    hasBeat = true;
+                    if (statusEl && statusEl.textContent) {
+                        setStatus('');
+                    }
+                    return;
+                }
 
-                lastBeat = Date.now();
-                hasBeat = true;
-                if (statusEl && statusEl.textContent) {
-                    setStatus('');
+                if (data.type === 'rev-reactor-host-state-request') {
+                    postHostStateToGame();
+                    return;
+                }
+
+                if (data.type === 'rev-reactor-save-write') {
+                    writeSavedGame(data.saveText);
                 }
             });
 
@@ -211,6 +251,7 @@
                 frameLoadAt = Date.now();
                 lastBeat = frameLoadAt;
                 hasBeat = false;
+                postHostStateToGame();
                 postThemeToGame();
             });
 

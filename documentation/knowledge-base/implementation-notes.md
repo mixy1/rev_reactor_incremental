@@ -52,3 +52,4 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 - Added iframe watchdog architecture: `web/index.html` is now a host page and `web/game.html` runs the game runtime.
 - Child frame emits `postMessage` heartbeat every 500ms; host reloads iframe on stalled heartbeat (6s timeout, 20s startup grace).
 - Save persistence remains in web localStorage (`rev_reactor_save`), so iframe restarts do not clear saved progress.
+- Updated iframe sandbox mode to `sandbox="allow-scripts"` and moved save/load/theme state sync to a parent↔child `postMessage` bridge (`RevReactorHostBridge`) so web save persistence still works without `allow-same-origin`.

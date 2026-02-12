@@ -116,6 +116,7 @@ Steps:
 - [x] Identified special fuel mechanics: Kymium pulsation, Monastium density penalty, Protium scaling, Discurrium row+column pulses.
 - [x] Updated Python simulation to match decoded tick pipeline.
 - [x] Added web iframe watchdog host (`index.html` + `game.html`) to recover from renderer hangs/crashes without clearing localStorage saves.
+- [x] Added host↔iframe postMessage save/theme bridge to support `sandbox="allow-scripts"` without `allow-same-origin`.
 - [ ] Implement upgrade system (stat bonuses, prestige).
 - [ ] Implement save/load (import/export).
 - [ ] Wire remaining UI elements (heat/power bars, info banner, stats panel).

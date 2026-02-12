@@ -544,10 +544,36 @@ def _handle_file_import(encoded: str) -> bool:
 if _WEB:
     _LOCALSTORAGE_KEY = "rev_reactor_save"
 
+    def _bridge_get_save_text() -> str | None:
+        try:
+            from js import window  # type: ignore
+            bridge = getattr(window, "RevReactorHostBridge", None)
+            if bridge is not None and hasattr(bridge, "getSaveText"):
+                text = bridge.getSaveText()
+                if text is None:
+                    return None
+                return str(text)
+        except Exception:
+            pass
+        return None
+
+    def _bridge_set_save_text(text: str) -> bool:
+        try:
+            from js import window  # type: ignore
+            bridge = getattr(window, "RevReactorHostBridge", None)
+            if bridge is not None and hasattr(bridge, "setSaveText"):
+                bridge.setSaveText(text)
+                return True
+        except Exception:
+            pass
+        return False
+
     def save_game(sim: Simulation, path=None) -> None:
         """Auto-save to localStorage."""
         data = _build_save_dict(sim)
         json_str = json.dumps(data, separators=(",", ":"))
+        if _bridge_set_save_text(json_str):
+            return
         try:
             from js import window  # type: ignore
             window.localStorage.setItem(_LOCALSTORAGE_KEY, json_str)
@@ -556,6 +582,15 @@ if _WEB:
 
     def load_game(sim: Simulation, path=None) -> bool:
         """Auto-load from localStorage. Returns False on missing/corrupt data."""
+        bridge_text = _bridge_get_save_text()
+        if bridge_text is not None:
+            try:
+                data = json.loads(bridge_text)
+            except json.JSONDecodeError as e:
+                print(f"[save] Error parsing bridged save data: {e}")
+                return False
+            return _restore_from_dict(sim, data)
+
         try:
             from js import window  # type: ignore
             text = window.localStorage.getItem(_LOCALSTORAGE_KEY)

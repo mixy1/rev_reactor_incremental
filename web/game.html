@@ -40,12 +40,104 @@
 
     <script>
         (function () {
+            const SAVE_KEY = 'rev_reactor_save';
+            const THEME_KEY = 'sprite-theme';
+            const state = {
+                ready: false,
+                saveText: null,
+                theme: 'default',
+            };
+            let readyResolvers = [];
+
+            function normalizeTheme(theme) {
+                return theme === 'decayed' ? 'decayed' : 'default';
+            }
+
+            function resolveReady() {
+                if (readyResolvers.length === 0) return;
+                for (const resolve of readyResolvers) {
+                    resolve(true);
+                }
+                readyResolvers = [];
+            }
+
+            function markReady() {
+                if (state.ready) return;
+                state.ready = true;
+                resolveReady();
+            }
+
+            function requestHostState() {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type: 'rev-reactor-host-state-request' }, '*');
+                } else {
+                    try {
+                        state.saveText = localStorage.getItem(SAVE_KEY);
+                        state.theme = normalizeTheme(localStorage.getItem(THEME_KEY));
+                    } catch (_err) {
+                        // Ignore unavailable localStorage in restricted contexts.
+                    }
+                    markReady();
+                }
+            }
+
+            window.RevReactorHostBridge = {
+                waitUntilReady(timeoutMs = 2000) {
+                    if (state.ready) return Promise.resolve(true);
+                    return new Promise((resolve) => {
+                        readyResolvers.push(resolve);
+                        setTimeout(() => {
+                            if (!state.ready) markReady();
+                            resolve(state.ready);
+                        }, timeoutMs);
+                    });
+                },
+                getSaveText() {
+                    return state.saveText;
+                },
+                setSaveText(text) {
+                    state.saveText = String(text);
+                    if (window.parent && window.parent !== window) {
+                        window.parent.postMessage(
+                            { type: 'rev-reactor-save-write', saveText: state.saveText },
+                            '*'
+                        );
+                        return;
+                    }
+                    try {
+                        localStorage.setItem(SAVE_KEY, state.saveText);
+                    } catch (_err) {
+                        // Ignore unavailable localStorage in restricted contexts.
+                    }
+                },
+                getTheme() {
+                    return state.theme;
+                },
+            };
+
+            window.addEventListener('message', (ev) => {
+                const data = ev.data;
+                if (!data || typeof data !== 'object') return;
+
+                if (data.type === 'rev-reactor-host-state') {
+                    state.theme = normalizeTheme(data.theme);
+                    state.saveText = typeof data.saveText === 'string' ? data.saveText : null;
+                    markReady();
+                    return;
+                }
+
+                if (data.type === 'rev-reactor-theme-set') {
+                    state.theme = normalizeTheme(data.theme);
+                }
+            });
+
             function beat() {
                 if (window.parent && window.parent !== window) {
                     window.parent.postMessage({ type: 'rev-reactor-beat', ts: Date.now() }, '*');
                 }
             }
 
+            requestHostState();
             beat();
             setInterval(beat, 500);
         })();

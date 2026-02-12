@@ -11,6 +11,7 @@
     const loadingBar = document.getElementById('loading-bar');
     const loadingStatus = document.getElementById('loading-status');
     const loadingDiv = document.getElementById('loading');
+    const hostBridge = window.RevReactorHostBridge || null;
     let hostThemeOverride = null;
     let applyThemeFromHost = null;
 
@@ -29,6 +30,16 @@
     function setProgress(pct, msg) {
         loadingBar.style.width = pct + '%';
         if (msg) loadingStatus.textContent = msg;
+    }
+
+    if (hostBridge && typeof hostBridge.waitUntilReady === 'function') {
+        setProgress(4, 'Syncing host state...');
+        try {
+            await hostBridge.waitUntilReady(2500);
+            hostThemeOverride = hostBridge.getTheme();
+        } catch (_err) {
+            // Continue with defaults if host sync fails.
+        }
     }
 
     // ── 1. Load sprite manifest and preload images ──────────────────
@@ -246,7 +257,11 @@ except Exception:
     const defaultImages = {};  // name -> original Image (captured at load)
     const altImages = {};      // name -> alt theme Image (lazy-loaded)
     let altLoaded = false;
-    let currentTheme = normalizeTheme(hostThemeOverride ?? localStorage.getItem('sprite-theme'));
+    let currentTheme = normalizeTheme(
+        hostThemeOverride ?? (hostBridge && typeof hostBridge.getTheme === 'function'
+            ? hostBridge.getTheme()
+            : 'default')
+    );
 
     function normalizeTheme(theme) {
         return theme === 'decayed' ? 'decayed' : 'default';
@@ -273,7 +288,6 @@ except Exception:
 
     async function setTheme(theme) {
         currentTheme = normalizeTheme(theme);
-        localStorage.setItem('sprite-theme', currentTheme);
         const btn = document.getElementById('theme-toggle');
 
         if (currentTheme === 'decayed') {
