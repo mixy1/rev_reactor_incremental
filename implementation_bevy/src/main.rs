@@ -1,5 +1,9 @@
 use bevy::asset::AssetPlugin;
 use bevy::prelude::*;
+use bevy::render::{
+    RenderPlugin,
+    settings::{WgpuFeatures, WgpuSettings, WgpuSettingsPriority},
+};
 use bevy::window::{PresentMode, Window};
 
 mod app;
@@ -24,6 +28,15 @@ fn main() {
                 })
                 .set(AssetPlugin {
                     file_path: asset_root.display().to_string(),
+                    ..default()
+                })
+                .set(RenderPlugin {
+                    render_creation: WgpuSettings {
+                        priority: WgpuSettingsPriority::Compatibility,
+                        features: WgpuFeatures::empty(),
+                        ..default()
+                    }
+                    .into(),
                     ..default()
                 }),
         )
