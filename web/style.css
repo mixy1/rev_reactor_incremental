@@ -176,9 +176,9 @@ main {
     width: 100% !important;
     min-width: 100%;
     max-width: 100%;
-    height: 760px !important;
-    min-height: 760px;
-    max-height: 760px;
+    height: 680px !important;
+    min-height: 680px;
+    max-height: 680px;
     border: 0;
     background: transparent;
     overflow: hidden;
@@ -239,7 +239,7 @@ main {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    padding-top: 12px;
+    padding-top: 0;
 }
 
 .game-embed-body #game-canvas {
