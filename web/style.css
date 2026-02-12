@@ -165,12 +165,20 @@ main {
     display: flex;
     flex-direction: column;
     align-items: center;
+    flex: 0 0 auto;
+    width: 900px;
+    max-width: 900px;
 }
 
 .game-frame {
     display: block;
-    width: 900px;
-    height: 630px;
+    flex: 0 0 auto;
+    width: 900px !important;
+    min-width: 900px;
+    max-width: 900px;
+    height: 630px !important;
+    min-height: 630px;
+    max-height: 630px;
     border: 1px solid var(--border);
     background: #000;
     overflow: hidden;
