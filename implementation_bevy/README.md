@@ -1,8 +1,6 @@
 # implementation_bevy
 
-Bevy scaffold for the Rev Reactor reimplementation. This crate currently defines
-the application shell, state flow placeholders, and resource placeholders only.
-Gameplay systems are intentionally not implemented yet.
+Rust + Bevy reimplementation track for Rev Reactor.
 
 ## Requirements
 
@@ -14,34 +12,41 @@ Gameplay systems are intentionally not implemented yet.
 ```bash
 cd implementation_bevy
 cargo check
+cargo test
 cargo run
 ```
 
-## Project Layout Intent
+## Current Status
 
-- `src/main.rs`:
-  - Bevy app bootstrap and plugin configuration
-  - App state enum placeholders (`Boot`, `MainMenu`, `InGame`, `Paused`)
-  - Resource placeholders for runtime/session data
-  - `AppShellPlugin` with startup and state-transition stub systems
+The crate now includes:
 
-As this scaffold grows, modules can be moved into dedicated files (`state.rs`,
-`resources.rs`, `plugins/`, `systems/`) without changing the startup contract.
+- A playable Bevy app loop (`src/app/*`) with:
+  - grid rendering
+  - HUD text (money/power/heat/tick + selected component)
+  - place/remove interactions
+  - pause/run toggle
+- Deterministic engine-agnostic simulation core (`src/core/*`)
+- Engine-agnostic models (`src/model/*`)
+- Data loaders for component/upgrade JSON (`src/data/*`)
+- Save codecs for JSON + base64 round-trip (`src/save/*`)
 
-## Data Layer
+## App Controls
 
-- `src/data/component_types.rs` and `src/data/upgrade_data.rs` define serde models
-  matching:
-  - `implementation/src/game/component_types.json`
-  - `implementation/src/game/upgrade_data.json`
-- `src/data/loader.rs` provides engine-agnostic loader APIs:
-  - `load_component_types[_from_path]()`
-  - `load_upgrade_data[_from_path]()`
+- `1`: Select `Fuel (Uranium)`
+- `2`: Select `Vent T1`
+- `3`: Select `Coolant T1`
+- `4`: Select `Capacitor T1`
+- `5`: Select `Plating T1`
+- `Left Click` on a grid cell: place selected component (if affordable and empty)
+- `Right Click` on a grid cell: remove/sell component (50% refund)
+- `Space` or `P`: toggle simulation run/pause
 
-## Save Layer
+## Layout
 
-- `src/save/model.rs` defines a serde-compatible save payload matching the Python
-  save schema.
-- `src/save/codec.rs` provides engine-agnostic codec APIs:
-  - JSON: `save_to_json_string()`, `load_from_json_string()`
-  - Base64: `export_to_base64()`, `import_from_base64()`
+- `src/main.rs`: Bevy app bootstrap/plugin wiring
+- `src/app/`: Bevy-facing state/resources/systems/view/input
+- `src/core/`: deterministic simulation and resource accounting
+- `src/model/`: shared component/grid domain types
+- `src/data/`: serde DTOs + loader helpers for catalog/upgrade data
+- `src/save/`: serde save payload + JSON/base64 codecs
+- `tests/`: deterministic simulation tests
