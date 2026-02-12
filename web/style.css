@@ -167,6 +167,22 @@ main {
     align-items: center;
 }
 
+.game-frame {
+    display: block;
+    width: 900px;
+    height: 630px;
+    border: 1px solid var(--border);
+    background: #000;
+}
+
+.game-watchdog-status {
+    margin-top: 0.5rem;
+    min-height: 1.2em;
+    font-size: 0.8125rem;
+    color: #ffb37a;
+    text-align: center;
+}
+
 .game-attribution {
     margin-top: 0.5rem;
     font-size: 0.8125rem;
@@ -183,6 +199,10 @@ main {
     width: auto;
     vertical-align: text-bottom;
     border-radius: 3px;
+}
+
+.game-embed-body {
+    overflow: hidden;
 }
 
 /* ── Loading screen ─────────────────────────────────────── */

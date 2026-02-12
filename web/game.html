@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=900">
+    <meta name="description" content="Reactor Incremental game frame">
+    <!-- Source base for Python files (overridden by build for production) -->
+    <meta name="src-base" content="../implementation/src/">
+    <link rel="icon" type="image/gif" href="mixy1.gif">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <title>nuclear.mixy1</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="game-embed-body">
+    <main>
+        <div class="game-shell">
+            <canvas id="game-canvas" width="900" height="630"></canvas>
+            <p class="game-attribution">
+                Original game created by
+                <a href="https://www.kongregate.com/en/games/cael/reactor-incremental" target="_blank" rel="noopener">cael</a>.
+                This version is a Python reimplementation by
+                <img src="mixy1.gif" alt="mixy1" class="inline-mixy-gif">.
+            </p>
+        </div>
+
+        <div id="loading">
+            <div class="loading-icon-row">
+                <img src="assets/sprites/Fuel1-1.png" alt="" class="loading-sprite">
+                <img src="assets/sprites/Fuel3-1.png" alt="" class="loading-sprite">
+                <img src="assets/sprites/Fuel5-1.png" alt="" class="loading-sprite">
+                <img src="assets/sprites/Fuel7-1.png" alt="" class="loading-sprite">
+                <img src="assets/sprites/Fuel9-1.png" alt="" class="loading-sprite">
+            </div>
+            <h1>Reactor Incremental</h1>
+            <div id="loading-bar-container">
+                <div id="loading-bar"></div>
+            </div>
+            <div id="loading-status">Initializing...</div>
+        </div>
+    </main>
+
+    <!-- Hidden file input for save import -->
+    <input type="file" id="file-input" accept=".txt,.json">
+
+    <script>
+        (function () {
+            function beat() {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type: 'rev-reactor-beat', ts: Date.now() }, '*');
+                }
+            }
+
+            beat();
+            setInterval(beat, 500);
+        })();
+    </script>
+    <script src="renderer.js"></script>
+    <script src="input.js"></script>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+    <script src="loader.js"></script>
+</body>
+</html>

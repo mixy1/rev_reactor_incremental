@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=900">
     <meta name="description" content="Reactor Incremental reimplementation — nuclear.mixy1">
-    <!-- Source base for Python files (overridden by build for production) -->
-    <meta name="src-base" content="../implementation/src/">
     <link rel="icon" type="image/gif" href="mixy1.gif">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -31,28 +29,16 @@
 
     <main>
         <div class="game-shell">
-            <canvas id="game-canvas" width="900" height="630"></canvas>
-            <p class="game-attribution">
-                Original game created by
-                <a href="https://www.kongregate.com/en/games/cael/reactor-incremental" target="_blank" rel="noopener">cael</a>.
-                This version is a Python reimplementation by
-                <img src="mixy1.gif" alt="mixy1" class="inline-mixy-gif">.
-            </p>
-        </div>
-
-        <div id="loading">
-            <div class="loading-icon-row">
-                <img src="assets/sprites/Fuel1-1.png" alt="" class="loading-sprite">
-                <img src="assets/sprites/Fuel3-1.png" alt="" class="loading-sprite">
-                <img src="assets/sprites/Fuel5-1.png" alt="" class="loading-sprite">
-                <img src="assets/sprites/Fuel7-1.png" alt="" class="loading-sprite">
-                <img src="assets/sprites/Fuel9-1.png" alt="" class="loading-sprite">
-            </div>
-            <h1>Reactor Incremental</h1>
-            <div id="loading-bar-container">
-                <div id="loading-bar"></div>
-            </div>
-            <div id="loading-status">Initializing...</div>
+            <iframe
+                id="game-frame"
+                class="game-frame"
+                title="Reactor Incremental Game"
+                src="game.html"
+                data-base-src="game.html"
+                loading="eager"
+                referrerpolicy="same-origin"
+            ></iframe>
+            <p id="watchdog-status" class="game-watchdog-status" aria-live="polite"></p>
         </div>
     </main>
 
@@ -85,12 +71,6 @@
             </div>
         </div>
     </footer>
-
-    <!-- Hidden file input for save import -->
-    <input type="file" id="file-input" accept=".txt,.json">
-
-    <script src="renderer.js"></script>
-    <script src="input.js"></script>
     <script>
         (async function () {
             const host = document.getElementById('changelog-entries');
@@ -151,7 +131,106 @@
             }
         })();
     </script>
-    <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
-    <script src="loader.js"></script>
+    <script>
+        (function () {
+            const frame = document.getElementById('game-frame');
+            const themeBtn = document.getElementById('theme-toggle');
+            const statusEl = document.getElementById('watchdog-status');
+
+            const CHECK_EVERY_MS = 1000;
+            const HEARTBEAT_TIMEOUT_MS = 6000;
+            const FIRST_BEAT_GRACE_MS = 20000;
+
+            let currentTheme = localStorage.getItem('sprite-theme') === 'decayed' ? 'decayed' : 'default';
+            let lastBeat = Date.now();
+            let frameLoadAt = Date.now();
+            let hasBeat = false;
+            let restartCount = 0;
+
+            function setStatus(message) {
+                if (!statusEl) return;
+                statusEl.textContent = message;
+            }
+
+            function applyThemeButton() {
+                if (!themeBtn) return;
+                themeBtn.classList.toggle('decayed-active', currentTheme === 'decayed');
+                themeBtn.textContent = currentTheme === 'decayed' ? 'Default' : 'Decayed';
+            }
+
+            function postThemeToGame() {
+                if (!frame.contentWindow) return;
+                frame.contentWindow.postMessage(
+                    { type: 'rev-reactor-theme-set', theme: currentTheme },
+                    '*'
+                );
+            }
+
+            function setTheme(theme) {
+                currentTheme = theme === 'decayed' ? 'decayed' : 'default';
+                localStorage.setItem('sprite-theme', currentTheme);
+                applyThemeButton();
+                postThemeToGame();
+            }
+
+            function restartFrame(reason) {
+                const baseSrc = frame.dataset.baseSrc || 'game.html';
+                const url = new URL(baseSrc, window.location.href);
+                url.searchParams.set('watchdog', Date.now().toString(36));
+                frame.src = `${url.pathname}${url.search}${url.hash}`;
+
+                restartCount += 1;
+                hasBeat = false;
+                frameLoadAt = Date.now();
+                lastBeat = frameLoadAt;
+                setStatus(`Game restarted (${reason}). Count: ${restartCount}`);
+            }
+
+            window.addEventListener('message', (ev) => {
+                if (ev.source !== frame.contentWindow) return;
+                const data = ev.data;
+                if (!data || typeof data !== 'object') return;
+                if (data.type !== 'rev-reactor-beat') return;
+
+                lastBeat = Date.now();
+                hasBeat = true;
+                if (statusEl && statusEl.textContent) {
+                    setStatus('');
+                }
+            });
+
+            frame.addEventListener('load', () => {
+                frameLoadAt = Date.now();
+                lastBeat = frameLoadAt;
+                hasBeat = false;
+                postThemeToGame();
+            });
+
+            if (themeBtn) {
+                themeBtn.addEventListener('click', () => {
+                    setTheme(currentTheme === 'decayed' ? 'default' : 'decayed');
+                });
+            }
+
+            setInterval(() => {
+                if (document.hidden) return;
+
+                const now = Date.now();
+                if (!hasBeat) {
+                    if (now - frameLoadAt > FIRST_BEAT_GRACE_MS) {
+                        restartFrame('no heartbeat during startup');
+                    }
+                    return;
+                }
+
+                if (now - lastBeat > HEARTBEAT_TIMEOUT_MS) {
+                    restartFrame('heartbeat timeout');
+                }
+            }, CHECK_EVERY_MS);
+
+            applyThemeButton();
+            postThemeToGame();
+        })();
+    </script>
 </body>
 </html>

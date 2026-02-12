@@ -46,3 +46,9 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 
 - Renderer minidump for `https://nuclear.mixy.one` shows Windows fail-fast `0xC0000409` with parameter `0xD` (`int 0x29` in `ntdll`), not a Python traceback.
 - Initial mitigation applied: upgraded web runtime from `pyodide v0.27.0` to `v0.29.3` in `web/index.html` and `dist/index.html`.
+
+## Web crash note (2026-02-12)
+
+- Added iframe watchdog architecture: `web/index.html` is now a host page and `web/game.html` runs the game runtime.
+- Child frame emits `postMessage` heartbeat every 500ms; host reloads iframe on stalled heartbeat (6s timeout, 20s startup grace).
+- Save persistence remains in web localStorage (`rev_reactor_save`), so iframe restarts do not clear saved progress.

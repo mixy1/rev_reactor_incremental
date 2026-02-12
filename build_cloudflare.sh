@@ -3,7 +3,7 @@
 #
 # Produces a flat dist/ directory with everything the site needs:
 #   dist/
-#     index.html, style.css, renderer.js, input.js, loader.js
+#     index.html, game.html, style.css, renderer.js, input.js, loader.js
 #     manifest.json, mixy1.gif
 #     assets/sprites/*.png
 #     src/*.py, src/game/*.py, src/game/*.json
@@ -41,6 +41,7 @@ mkdir -p "$DIST/assets/sprites" "$DIST/src/game"
 # 1. Copy web static files
 echo "Copying web files..."
 cp web/index.html "$DIST/"
+cp web/game.html "$DIST/"
 cp web/style.css "$DIST/"
 cp web/renderer.js "$DIST/"
 cp web/input.js "$DIST/"
@@ -98,6 +99,7 @@ echo "  $CHANGELOG_COUNT changelog entries"
 # 2. Patch index.html: change src-base to 'src/' for flat structure
 echo "Patching src-base for production..."
 sed -i 's|content="../implementation/src/"|content="src/"|' "$DIST/index.html"
+sed -i 's|content="../implementation/src/"|content="src/"|' "$DIST/game.html"
 
 # 3. Copy sprite assets and generate manifest
 echo "Copying sprites..."

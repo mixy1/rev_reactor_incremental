@@ -115,6 +115,7 @@ Steps:
 - [x] Mapped memory layouts: Simulation, Reactor, Component, ComponentType objects.
 - [x] Identified special fuel mechanics: Kymium pulsation, Monastium density penalty, Protium scaling, Discurrium row+column pulses.
 - [x] Updated Python simulation to match decoded tick pipeline.
+- [x] Added web iframe watchdog host (`index.html` + `game.html`) to recover from renderer hangs/crashes without clearing localStorage saves.
 - [ ] Implement upgrade system (stat bonuses, prestige).
 - [ ] Implement save/load (import/export).
 - [ ] Wire remaining UI elements (heat/power bars, info banner, stats panel).

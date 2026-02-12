@@ -11,6 +11,20 @@
     const loadingBar = document.getElementById('loading-bar');
     const loadingStatus = document.getElementById('loading-status');
     const loadingDiv = document.getElementById('loading');
+    let hostThemeOverride = null;
+    let applyThemeFromHost = null;
+
+    // Host page (index.html) controls theme in iframe mode via postMessage.
+    // Record early messages now; apply once theme system is initialized.
+    window.addEventListener('message', (ev) => {
+        const data = ev.data;
+        if (!data || typeof data !== 'object') return;
+        if (data.type !== 'rev-reactor-theme-set') return;
+        hostThemeOverride = data.theme;
+        if (applyThemeFromHost) {
+            applyThemeFromHost(hostThemeOverride);
+        }
+    });
 
     function setProgress(pct, msg) {
         loadingBar.style.width = pct + '%';
@@ -232,7 +246,11 @@ except Exception:
     const defaultImages = {};  // name -> original Image (captured at load)
     const altImages = {};      // name -> alt theme Image (lazy-loaded)
     let altLoaded = false;
-    let currentTheme = localStorage.getItem('sprite-theme') || 'default';
+    let currentTheme = normalizeTheme(hostThemeOverride ?? localStorage.getItem('sprite-theme'));
+
+    function normalizeTheme(theme) {
+        return theme === 'decayed' ? 'decayed' : 'default';
+    }
 
     // Snapshot the original images so we can restore them later
     for (const [name, entry] of Object.entries(Renderer.texturesByName)) {
@@ -254,11 +272,11 @@ except Exception:
     }
 
     async function setTheme(theme) {
-        currentTheme = theme;
-        localStorage.setItem('sprite-theme', theme);
+        currentTheme = normalizeTheme(theme);
+        localStorage.setItem('sprite-theme', currentTheme);
         const btn = document.getElementById('theme-toggle');
 
-        if (theme === 'decayed') {
+        if (currentTheme === 'decayed') {
             await loadAltSprites();
             for (const name of manifest) {
                 if (altImages[name]) {
@@ -274,6 +292,17 @@ except Exception:
             }
             if (btn) btn.classList.remove('decayed-active');
         }
+    }
+
+    applyThemeFromHost = (theme) => {
+        const nextTheme = normalizeTheme(theme);
+        if (nextTheme === currentTheme) return;
+        void setTheme(nextTheme);
+    };
+
+    // Apply any theme request that arrived before loader reached this point.
+    if (hostThemeOverride !== null) {
+        applyThemeFromHost(hostThemeOverride);
     }
 
     // Wire up the toggle button
