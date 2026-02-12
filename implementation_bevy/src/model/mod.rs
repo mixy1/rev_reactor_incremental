@@ -1,5 +1,5 @@
 mod component;
 mod grid;
 
-pub use component::{ComponentCategory, ComponentKind, FuelKind, PlacedComponent};
-pub use grid::{GridCoord, GridError, ReactorGrid};
+pub use component::{ComponentCategory, ComponentKind, ComponentStats, FuelKind, PlacedComponent};
+pub use grid::{GridCell, GridCoord, GridError, ReactorGrid};

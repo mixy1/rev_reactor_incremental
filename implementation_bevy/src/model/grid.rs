@@ -1,6 +1,6 @@
 use super::component::ComponentKind;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct GridCoord {
     pub x: usize,
     pub y: usize,
@@ -14,6 +14,13 @@ impl GridCoord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GridCell {
+    pub kind: ComponentKind,
+    pub component_id: u64,
+    pub placed_tick: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GridError {
     OutOfBounds(GridCoord),
 }
@@ -23,7 +30,7 @@ pub struct ReactorGrid {
     pub width: usize,
     pub height: usize,
     pub layers: usize,
-    cells: Vec<Option<ComponentKind>>,
+    cells: Vec<Option<GridCell>>,
 }
 
 impl ReactorGrid {
@@ -44,18 +51,38 @@ impl ReactorGrid {
     }
 
     pub fn get(&self, coord: GridCoord) -> Option<ComponentKind> {
+        self.get_cell(coord).map(|cell| cell.kind)
+    }
+
+    pub fn get_cell(&self, coord: GridCoord) -> Option<GridCell> {
         let index = self.index(coord)?;
         self.cells[index]
     }
 
     pub fn set(&mut self, coord: GridCoord, kind: Option<ComponentKind>) -> Result<(), GridError> {
+        match kind {
+            Some(kind) => self.place(
+                coord,
+                GridCell {
+                    kind,
+                    component_id: 0,
+                    placed_tick: 0,
+                },
+            ),
+            None => self.clear(coord),
+        }
+    }
+
+    pub fn place(&mut self, coord: GridCoord, cell: GridCell) -> Result<(), GridError> {
         let index = self.index(coord).ok_or(GridError::OutOfBounds(coord))?;
-        self.cells[index] = kind;
+        self.cells[index] = Some(cell);
         Ok(())
     }
 
     pub fn clear(&mut self, coord: GridCoord) -> Result<(), GridError> {
-        self.set(coord, None)
+        let index = self.index(coord).ok_or(GridError::OutOfBounds(coord))?;
+        self.cells[index] = None;
+        Ok(())
     }
 
     fn index(&self, coord: GridCoord) -> Option<usize> {

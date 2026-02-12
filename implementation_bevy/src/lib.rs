@@ -10,7 +10,8 @@ pub use data::{
     load_upgrade_data_from_path,
 };
 pub use model::{
-    ComponentCategory, ComponentKind, FuelKind, GridCoord, GridError, PlacedComponent, ReactorGrid,
+    ComponentCategory, ComponentKind, ComponentStats, FuelKind, GridCell, GridCoord, GridError,
+    PlacedComponent, ReactorGrid,
 };
 pub use save::{
     SaveComponent, SaveData, SaveStore, export_to_base64, import_from_base64,
