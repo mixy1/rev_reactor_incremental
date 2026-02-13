@@ -35,32 +35,22 @@ _ORIG_GRID_DEPTH = 1
 
 # Original game component type index → our catalog name (sprite-based).
 # RE: component_types.json field_index ordering.
-_ORIG_INDEX_TO_NAME = {
-    0: "Fuel1-1", 1: "Fuel1-2", 2: "Fuel1-4",
-    3: "Fuel2-1", 4: "Fuel2-2", 5: "Fuel2-4",
-    6: "Fuel3-1", 7: "Fuel3-2", 8: "Fuel3-4",
-    9: "Fuel4-1", 10: "Fuel4-2", 11: "Fuel4-4",
-    12: "Fuel5-1", 13: "Fuel5-2", 14: "Fuel5-4",
-    15: "Fuel6-1", 16: "Fuel6-2", 17: "Fuel6-4",
-    18: "Fuel7-1", 19: "Fuel7-2", 20: "Fuel7-4",
-    21: "Fuel8-1", 22: "Fuel8-2", 23: "Fuel8-4",
-    24: "Fuel9-1", 25: "Fuel9-2", 26: "Fuel9-4",
-    27: "Fuel10-1", 28: "Fuel10-2", 29: "Fuel10-4",
-    30: "Fuel11-1", 31: "Fuel11-2", 32: "Fuel11-4",
-    33: "Vent1", 34: "Vent2", 35: "Vent3", 36: "Vent4", 37: "Vent5",
-    38: "Exchanger1", 39: "Exchanger2", 40: "Exchanger3",
-    41: "Exchanger4", 42: "Exchanger5",
-    43: "Inlet1", 44: "Inlet2", 45: "Inlet3", 46: "Inlet4", 47: "Inlet5",
-    48: "Outlet1", 49: "Outlet2", 50: "Outlet3", 51: "Outlet4", 52: "Outlet5",
-    53: "Reflector1", 54: "Reflector2", 55: "Reflector3",
-    56: "Reflector4", 57: "Reflector5",
-    58: "Capacitor1", 59: "Capacitor2", 60: "Capacitor3",
-    61: "Capacitor4", 62: "Capacitor5",
-    63: "Plate1", 64: "Plate2", 65: "Plate3", 66: "Plate4", 67: "Plate5",
-    68: "Coolant1", 69: "Coolant2", 70: "Coolant3",
-    71: "Coolant4", 72: "Coolant5", 73: "Coolant6",
-    74: "Capacitor6",
-}
+# Legacy save component order from Assembly-CSharp `ComponentTypes` fields:
+# fuels, vents, exchangers, inlets, outlets, coolants, reflectors, platings,
+# capacitors, ExtremeCapacitor, ExtremeCoolant.
+_ORIG_COMPONENT_ORDER = (
+    [f"Fuel{tier}-{cores}" for tier in range(1, 12) for cores in (1, 2, 4)]
+    + [f"Vent{i}" for i in range(1, 6)]
+    + [f"Exchanger{i}" for i in range(1, 6)]
+    + [f"Inlet{i}" for i in range(1, 6)]
+    + [f"Outlet{i}" for i in range(1, 6)]
+    + [f"Coolant{i}" for i in range(1, 6)]
+    + [f"Reflector{i}" for i in range(1, 6)]
+    + [f"Plate{i}" for i in range(1, 6)]
+    + [f"Capacitor{i}" for i in range(1, 6)]
+    + ["Capacitor6", "Coolant6"]
+)
+_ORIG_INDEX_TO_NAME = {idx: name for idx, name in enumerate(_ORIG_COMPONENT_ORDER)}
 _ORIG_NAME_TO_INDEX = {name: idx for idx, name in _ORIG_INDEX_TO_NAME.items()}
 
 
@@ -388,6 +378,17 @@ def _legacy_grid_bounds(sim: Simulation) -> tuple[int, int, int]:
     )
 
 
+def _legacy_grid_height_from_upgrades(upgrade_levels: list[int]) -> int:
+    """Infer legacy grid height from serialized Subspace Expansion level."""
+    subspace_level = 0
+    if len(upgrade_levels) > 50:
+        try:
+            subspace_level = max(0, int(upgrade_levels[50]))
+        except (TypeError, ValueError):
+            subspace_level = 0
+    return _ORIG_BASE_GRID_HEIGHT + subspace_level
+
+
 def _build_new_export_text(sim: Simulation) -> str:
     """Build unrestricted base64-JSON export payload."""
     data = _build_save_dict(sim)
@@ -419,11 +420,13 @@ def _build_original_export_text(sim: Simulation) -> str | None:
                 "outside legacy bounds, skipping"
             )
             continue
+        # Legacy save coordinates use opposite Y axis from runtime grid coordinates.
+        legacy_y = max_y - 1 - comp.grid_y
         component_entries.append(
             ",".join(
                 [
                     str(comp.grid_x),
-                    str(comp.grid_y),
+                    str(legacy_y),
                     str(comp.grid_z),
                     str(type_idx),
                     _format_orig_number(comp.heat),
@@ -509,6 +512,7 @@ def _parse_original_save(text: str) -> dict | None:
 
     # Parse components: x,y,z,typeIndex,heat,durability;
     components = []
+    legacy_h = _legacy_grid_height_from_upgrades(upgrade_levels)
     comps_str = fields.get("Components", "")
     for entry in comps_str.split(";"):
         entry = entry.strip()
@@ -517,13 +521,14 @@ def _parse_original_save(text: str) -> dict | None:
         parts = entry.split(",")
         if len(parts) < 4:
             continue
-        x, y, z, type_idx = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+        x, legacy_y, z, type_idx = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
         heat = float(parts[4]) if len(parts) > 4 else 0.0
         durability = float(parts[5]) if len(parts) > 5 else 0.0
         name = _ORIG_INDEX_TO_NAME.get(type_idx)
         if name is None:
             print(f"[save] Warning: unknown original component index {type_idx}")
             continue
+        y = legacy_h - 1 - legacy_y if 0 <= legacy_y < legacy_h else legacy_y
         components.append({
             "name": name,
             "x": x, "y": y, "z": z,

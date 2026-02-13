@@ -62,3 +62,5 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 - Import remains backward-compatible with all three formats: raw JSON, base64-JSON, and original encrypted text.
 - Original `ProtiumDepleted` now round-trips through import/export (`depleted_protium_count`).
 - In sandboxed iframe mode (`sandbox="allow-scripts"`), exports now route through the host page via `postMessage` (`rev-reactor-download`) so file downloads still work without relaxing iframe sandbox flags.
+- Legacy component index mapping now follows `ComponentTypes` field order (fixes old-export misloads such as Ultimate Reflector/Extreme Capacitor becoming coolants).
+- Legacy export/import now convert Y coordinates between runtime grid space and original save space (vertical axis inversion fix).
