@@ -56,6 +56,8 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 
 ## Save compatibility note (2026-02-13)
 
-- Export now emits **original Reactor Idle encrypted save text** (AES-256-CBC with the game's PasswordDeriveBytes-compatible key derivation) instead of base64-JSON.
-- Import support remains backward-compatible with all three formats: raw JSON, base64-JSON, and original encrypted text.
+- Options panel now exposes **Export Old** and **Export New** buttons.
+- `Export Old` emits original Reactor Idle encrypted save text (AES-256-CBC with the game's PasswordDeriveBytes-compatible key derivation), bounded to legacy schema.
+- `Export New` emits unrestricted base64-JSON (full reimplementation state, no legacy bounds).
+- Import remains backward-compatible with all three formats: raw JSON, base64-JSON, and original encrypted text.
 - Original `ProtiumDepleted` now round-trips through import/export (`depleted_protium_count`).

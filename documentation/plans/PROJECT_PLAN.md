@@ -137,7 +137,7 @@ Steps:
 - [x] Added web iframe watchdog host (`index.html` + `game.html`) to recover from renderer hangs/crashes without clearing localStorage saves.
 - [x] Added host↔iframe postMessage save/theme bridge to support `sandbox="allow-scripts"` without `allow-same-origin`.
 - [x] Added `implementation_bevy/` with data loaders, deterministic core tests, playable Bevy grid loop, and save/load/autosave to `save.json`.
-- [x] Updated Python export path to emit original Reactor Idle-compatible encrypted saves (legacy import/export interoperability).
+- [x] Added dual export paths in Python options UI: `Export Old` (legacy-bounded encrypted format) and `Export New` (unbounded base64-JSON).
 - [ ] Implement upgrade system (stat bonuses, prestige).
 - [ ] Implement save/load (import/export).
 - [ ] Wire remaining UI elements (heat/power bars, info banner, stats panel).

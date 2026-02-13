@@ -867,40 +867,57 @@ class Ui:
 
         # ── Export / Import buttons ──────────────────────────────────
         if self.save_dir is not None:
-            from game.save import export_save, import_save_from_file
+            from game.save import export_save_old, export_save_new, import_save_from_file
 
             ei_y = btn_y + btn_h + 12
-            ei_btn_w = 74
+            ei_btn_w = 96
             ei_btn_h = 26
             gap = 10
             total_w = ei_btn_w * 2 + gap
             ei_start_x = content_x + (content_w - total_w) // 2
 
-            # Export button
-            ex_x = ei_start_x
-            hover_export = (ex_x <= mouse_x <= ex_x + ei_btn_w and
-                            ei_y <= mouse_y <= ei_y + ei_btn_h)
-            ex_bg = Color(60, 80, 60, 255) if hover_export else Color(40, 60, 40, 255)
-            draw_rectangle(ex_x, ei_y, ei_btn_w, ei_btn_h, ex_bg)
-            draw_rectangle_lines(ex_x, ei_y, ei_btn_w, ei_btn_h, Color(80, 120, 80, 255))
-            ex_lw = _measure("Export", font_sm)
-            draw_text("Export", ex_x + (ei_btn_w - ex_lw) // 2, ei_y + 7, font_sm, text_color)
+            # Export Old button
+            old_x = ei_start_x
+            hover_old = (old_x <= mouse_x <= old_x + ei_btn_w and
+                         ei_y <= mouse_y <= ei_y + ei_btn_h)
+            old_bg = Color(60, 80, 60, 255) if hover_old else Color(40, 60, 40, 255)
+            draw_rectangle(old_x, ei_y, ei_btn_w, ei_btn_h, old_bg)
+            draw_rectangle_lines(old_x, ei_y, ei_btn_w, ei_btn_h, Color(80, 120, 80, 255))
+            old_lw = _measure("Export Old", font_sm)
+            draw_text("Export Old", old_x + (ei_btn_w - old_lw) // 2, ei_y + 7, font_sm, text_color)
 
-            if hover_export and mouse_pressed:
+            if hover_old and mouse_pressed:
                 if _WEB:
-                    export_save(sim)
+                    export_save_old(sim)
                 else:
-                    export_save(sim, self.save_dir / "save_export.txt")
+                    export_save_old(sim, self.save_dir / "save_export_old.txt")
 
-            # Import button
-            im_x = ei_start_x + ei_btn_w + gap
+            # Export New button
+            new_x = ei_start_x + ei_btn_w + gap
+            hover_new = (new_x <= mouse_x <= new_x + ei_btn_w and
+                         ei_y <= mouse_y <= ei_y + ei_btn_h)
+            new_bg = Color(50, 80, 90, 255) if hover_new else Color(35, 60, 70, 255)
+            draw_rectangle(new_x, ei_y, ei_btn_w, ei_btn_h, new_bg)
+            draw_rectangle_lines(new_x, ei_y, ei_btn_w, ei_btn_h, Color(70, 110, 125, 255))
+            new_lw = _measure("Export New", font_sm)
+            draw_text("Export New", new_x + (ei_btn_w - new_lw) // 2, ei_y + 7, font_sm, text_color)
+
+            if hover_new and mouse_pressed:
+                if _WEB:
+                    export_save_new(sim)
+                else:
+                    export_save_new(sim, self.save_dir / "save_export_new.txt")
+
+            # Import button (second row)
+            im_y = ei_y + ei_btn_h + 8
+            im_x = content_x + (content_w - ei_btn_w) // 2
             hover_import = (im_x <= mouse_x <= im_x + ei_btn_w and
-                            ei_y <= mouse_y <= ei_y + ei_btn_h)
+                            im_y <= mouse_y <= im_y + ei_btn_h)
             im_bg = Color(50, 60, 80, 255) if hover_import else Color(35, 45, 60, 255)
-            draw_rectangle(im_x, ei_y, ei_btn_w, ei_btn_h, im_bg)
-            draw_rectangle_lines(im_x, ei_y, ei_btn_w, ei_btn_h, Color(70, 90, 120, 255))
+            draw_rectangle(im_x, im_y, ei_btn_w, ei_btn_h, im_bg)
+            draw_rectangle_lines(im_x, im_y, ei_btn_w, ei_btn_h, Color(70, 90, 120, 255))
             im_lw = _measure("Import", font_sm)
-            draw_text("Import", im_x + (ei_btn_w - im_lw) // 2, ei_y + 7, font_sm, text_color)
+            draw_text("Import", im_x + (ei_btn_w - im_lw) // 2, im_y + 7, font_sm, text_color)
 
             if hover_import and mouse_pressed:
                 import_save_from_file(sim)

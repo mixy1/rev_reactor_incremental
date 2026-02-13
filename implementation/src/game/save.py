@@ -1,8 +1,9 @@
 """Save/load and export/import system for game state.
 
 Auto-save: JSON to local file (native) or localStorage (web).
-Export: Reactor Idle-compatible encrypted text (AES-256-CBC via
-.NET PasswordDeriveBytes-compatible key derivation).
+Export Old: Reactor Idle-compatible encrypted text (AES-256-CBC via
+.NET PasswordDeriveBytes-compatible key derivation), bounded to legacy schema.
+Export New: base64-JSON with full reimplementation state (no legacy bounds).
 Import: supports raw JSON, base64-JSON, and original encrypted format.
 """
 from __future__ import annotations
@@ -27,6 +28,10 @@ _INIT_VECTOR = b"@x0B2!3D4ezF607m"
 _KEY_SIZE = 256  # bits
 _PASSWORD_ITERATIONS = 2
 _ORIG_BUILD_VERSION = 24
+_ORIG_UPGRADE_COUNT = 51
+_ORIG_BASE_GRID_WIDTH = 19
+_ORIG_BASE_GRID_HEIGHT = 16
+_ORIG_GRID_DEPTH = 1
 
 # Original game component type index → our catalog name (sprite-based).
 # RE: component_types.json field_index ordering.
@@ -368,14 +373,51 @@ def _format_orig_number(value: float) -> str:
     return text.replace("e", "E")
 
 
+def _legacy_grid_bounds(sim: Simulation) -> tuple[int, int, int]:
+    """Legacy reactor bounds used by original save export."""
+    subspace_level = 0
+    if len(sim.upgrade_manager.upgrades) > 50:
+        try:
+            subspace_level = max(0, int(sim.upgrade_manager.upgrades[50].level))
+        except (TypeError, ValueError):
+            subspace_level = 0
+    return (
+        _ORIG_BASE_GRID_WIDTH + subspace_level,
+        _ORIG_BASE_GRID_HEIGHT + subspace_level,
+        _ORIG_GRID_DEPTH,
+    )
+
+
+def _build_new_export_text(sim: Simulation) -> str:
+    """Build unrestricted base64-JSON export payload."""
+    data = _build_save_dict(sim)
+    json_str = json.dumps(data, separators=(",", ":"))
+    return base64.b64encode(json_str.encode("utf-8")).decode("ascii")
+
+
 def _build_original_export_text(sim: Simulation) -> str | None:
-    """Build encrypted Reactor Idle-compatible export text."""
+    """Build bounded encrypted Reactor Idle-compatible export text."""
+    max_x, max_y, max_z = _legacy_grid_bounds(sim)
     component_entries: list[str] = []
     sorted_components = sorted(sim.components, key=lambda c: (c.grid_z, c.grid_y, c.grid_x))
     for comp in sorted_components:
         type_idx = _ORIG_NAME_TO_INDEX.get(comp.stats.name)
         if type_idx is None:
             print(f"[save] Warning: cannot export unknown component '{comp.stats.name}', skipping")
+            continue
+        if (
+            comp.grid_x < 0
+            or comp.grid_y < 0
+            or comp.grid_z < 0
+            or comp.grid_x >= max_x
+            or comp.grid_y >= max_y
+            or comp.grid_z >= max_z
+        ):
+            print(
+                "[save] Warning: component "
+                f"'{comp.stats.name}' at ({comp.grid_x},{comp.grid_y},{comp.grid_z}) "
+                "outside legacy bounds, skipping"
+            )
             continue
         component_entries.append(
             ",".join(
@@ -393,7 +435,13 @@ def _build_original_export_text(sim: Simulation) -> str | None:
     if components_str:
         components_str += ";"
 
-    upgrade_levels = ";".join(str(max(0, int(u.level))) for u in sim.upgrade_manager.upgrades)
+    legacy_upgrade_levels = []
+    for idx in range(_ORIG_UPGRADE_COUNT):
+        if idx < len(sim.upgrade_manager.upgrades):
+            legacy_upgrade_levels.append(str(max(0, int(sim.upgrade_manager.upgrades[idx].level))))
+        else:
+            legacy_upgrade_levels.append("0")
+    upgrade_levels = ";".join(legacy_upgrade_levels)
     if upgrade_levels:
         upgrade_levels += ";"
 
@@ -639,7 +687,7 @@ def _try_import_data(encoded: str) -> dict | None:
     """Try to parse import data in multiple formats.
 
     1. Raw JSON dict (desktop auto-save format)
-    2. base64 -> JSON dict (web export format)
+    2. base64 -> JSON dict (new export format)
     3. base64 -> AES-256-CBC ciphertext -> pipe-delimited (original game)
     """
     # 1. Try raw JSON first (desktop save.json / direct paste)
@@ -650,7 +698,7 @@ def _try_import_data(encoded: str) -> dict | None:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # 2. Try base64 -> JSON (web export format)
+    # 2. Try base64 -> JSON (new export format)
     try:
         raw = base64.b64decode(encoded)
     except Exception:
@@ -764,25 +812,40 @@ if _WEB:
             return False
         return _restore_from_dict(sim, data)
 
-    def export_save(sim: Simulation, path=None) -> None:
-        """Export original Reactor Idle-compatible encrypted save text."""
+    def _download_text(filename: str, text: str) -> None:
+        from js import document, Blob, URL  # type: ignore
+        blob = Blob.new([text], {"type": "text/plain"})
+        url = URL.createObjectURL(blob)
+        a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+
+    def export_save_old(sim: Simulation, path=None) -> None:
+        """Export bounded original Reactor Idle-compatible encrypted save text."""
         encoded = _build_original_export_text(sim)
         if encoded is None:
             print("[save] Error exporting save: failed to build encrypted export")
             return
         try:
-            from js import document, window, Blob, URL  # type: ignore
-            blob = Blob.new([encoded], {"type": "text/plain"})
-            url = URL.createObjectURL(blob)
-            a = document.createElement("a")
-            a.href = url
-            a.download = "rev_reactor_save.txt"
-            document.body.appendChild(a)
-            a.click()
-            document.body.removeChild(a)
-            URL.revokeObjectURL(url)
+            _download_text("rev_reactor_save_old.txt", encoded)
         except Exception as e:
             print(f"[save] Error exporting save: {e}")
+
+    def export_save_new(sim: Simulation, path=None) -> None:
+        """Export unrestricted new-format base64-JSON save text."""
+        encoded = _build_new_export_text(sim)
+        try:
+            _download_text("rev_reactor_save_new.txt", encoded)
+        except Exception as e:
+            print(f"[save] Error exporting new save: {e}")
+
+    def export_save(sim: Simulation, path=None) -> None:
+        """Backward-compatible alias for old export."""
+        export_save_old(sim, path)
 
     def import_save_from_file(sim: Simulation) -> bool:
         """Trigger the browser file input element to import a save.
@@ -825,8 +888,8 @@ else:
             return False
         return _restore_from_dict(sim, data)
 
-    def export_save(sim: Simulation, path: Path) -> None:
-        """Export original Reactor Idle-compatible encrypted save text."""
+    def export_save_old(sim: Simulation, path: Path) -> None:
+        """Export bounded original Reactor Idle-compatible encrypted save text."""
         encoded = _build_original_export_text(sim)
         if encoded is None:
             print("[save] Error exporting save: failed to build encrypted export")
@@ -835,6 +898,18 @@ else:
             path.write_text(encoded, encoding="utf-8")
         except OSError as e:
             print(f"[save] Error exporting save: {e}")
+
+    def export_save_new(sim: Simulation, path: Path) -> None:
+        """Export unrestricted new-format base64-JSON save text."""
+        encoded = _build_new_export_text(sim)
+        try:
+            path.write_text(encoded, encoding="utf-8")
+        except OSError as e:
+            print(f"[save] Error exporting new save: {e}")
+
+    def export_save(sim: Simulation, path: Path) -> None:
+        """Backward-compatible alias for old export."""
+        export_save_old(sim, path)
 
     def import_save_from_file(sim: Simulation) -> bool:
         """Open a file dialog, read the selected file, and import it.
