@@ -1,15 +1,16 @@
 """Save/load and export/import system for game state.
 
 Auto-save: JSON to local file (native) or localStorage (web).
-Export/Import: Base64-encoded text file for sharing saves.
-Import also supports the original Reactor Idle encrypted format
-(AES-256-CBC via .NET PasswordDeriveBytes).
+Export: Reactor Idle-compatible encrypted text (AES-256-CBC via
+.NET PasswordDeriveBytes-compatible key derivation).
+Import: supports raw JSON, base64-JSON, and original encrypted format.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,6 +26,7 @@ _SALT_VALUE = b"superSPP#ci1lZlt"
 _INIT_VECTOR = b"@x0B2!3D4ezF607m"
 _KEY_SIZE = 256  # bits
 _PASSWORD_ITERATIONS = 2
+_ORIG_BUILD_VERSION = 24
 
 # Original game component type index → our catalog name (sprite-based).
 # RE: component_types.json field_index ordering.
@@ -54,6 +56,7 @@ _ORIG_INDEX_TO_NAME = {
     71: "Coolant4", 72: "Coolant5", 73: "Coolant6",
     74: "Capacitor6",
 }
+_ORIG_NAME_TO_INDEX = {name: idx for idx, name in _ORIG_INDEX_TO_NAME.items()}
 
 
 def _ms_password_derive_bytes(password: bytes, salt: bytes,
@@ -134,6 +137,44 @@ def _decrypt_original(ciphertext: bytes) -> str | None:
     return decrypted[:-pad].decode("utf-8", errors="replace")
 
 
+def _encrypt_original(plaintext: str) -> str | None:
+    """Encrypt Reactor Idle plaintext save to base64 (AES-256-CBC, PKCS7)."""
+    key = _ms_password_derive_bytes(
+        _PASS_PHRASE, _SALT_VALUE, _PASSWORD_ITERATIONS, _KEY_SIZE // 8
+    )
+    data = plaintext.encode("utf-8")
+    pad = 16 - (len(data) % 16)
+    padded = data + bytes([pad]) * pad
+
+    encrypted = None
+
+    # Try pycryptodome first (faster, available in desktop builds)
+    try:
+        from Crypto.Cipher import AES
+        cipher = AES.new(key, AES.MODE_CBC, _INIT_VECTOR)
+        encrypted = cipher.encrypt(padded)
+    except ImportError:
+        try:
+            from Cryptodome.Cipher import AES
+            cipher = AES.new(key, AES.MODE_CBC, _INIT_VECTOR)
+            encrypted = cipher.encrypt(padded)
+        except ImportError:
+            pass
+    except ValueError as e:
+        print(f"[save] AES encryption failed: {e}")
+        return None
+
+    # Fallback: pure-Python AES-256-CBC (for Pyodide or when pycryptodome is missing)
+    if encrypted is None:
+        try:
+            encrypted = _aes_cbc_encrypt(key, _INIT_VECTOR, padded)
+        except Exception as e:
+            print(f"[save] Pure-Python AES encryption failed: {e}")
+            return None
+
+    return base64.b64encode(encrypted).decode("ascii")
+
+
 # ── Pure-Python AES-256-CBC (no dependencies) ────────────────────────
 
 def _aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
@@ -148,6 +189,21 @@ def _aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
         decrypted_block = _aes_decrypt_block(block, rk)
         result.extend(bytes(a ^ b for a, b in zip(decrypted_block, prev)))
         prev = block
+    return bytes(result)
+
+
+def _aes_cbc_encrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
+    """AES-256-CBC encryption, pure Python. Slow but dependency-free."""
+    assert len(key) == 32 and len(iv) == 16 and len(data) % 16 == 0
+    rk = _aes_key_expansion(key)
+    result = bytearray()
+    prev = iv
+    for i in range(0, len(data), 16):
+        block = data[i:i + 16]
+        xored = bytes(a ^ b for a, b in zip(block, prev))
+        encrypted_block = _aes_encrypt_block(xored, rk)
+        result.extend(encrypted_block)
+        prev = encrypted_block
     return bytes(result)
 
 
@@ -265,6 +321,105 @@ def _aes_decrypt_block(block: bytes, rk: list) -> bytes:
     return bytes(s)
 
 
+def _aes_encrypt_block(block: bytes, rk: list) -> bytes:
+    nr = len(rk) // 4 - 1  # 14 for AES-256
+    s = list(block)
+
+    # Initial AddRoundKey
+    for i in range(16):
+        s[i] ^= (rk[i // 4] >> (24 - 8 * (i % 4))) & 0xff
+
+    for rnd in range(1, nr):
+        # SubBytes
+        s = [_SBOX[b] for b in s]
+        # ShiftRows
+        s[1], s[5], s[9], s[13] = s[5], s[9], s[13], s[1]
+        s[2], s[6], s[10], s[14] = s[10], s[14], s[2], s[6]
+        s[3], s[7], s[11], s[15] = s[15], s[3], s[7], s[11]
+        # MixColumns
+        t = list(s)
+        for c in range(4):
+            j = c * 4
+            s[j] = _mul(t[j], 0x02) ^ _mul(t[j + 1], 0x03) ^ t[j + 2] ^ t[j + 3]
+            s[j + 1] = t[j] ^ _mul(t[j + 1], 0x02) ^ _mul(t[j + 2], 0x03) ^ t[j + 3]
+            s[j + 2] = t[j] ^ t[j + 1] ^ _mul(t[j + 2], 0x02) ^ _mul(t[j + 3], 0x03)
+            s[j + 3] = _mul(t[j], 0x03) ^ t[j + 1] ^ t[j + 2] ^ _mul(t[j + 3], 0x02)
+        # AddRoundKey
+        for i in range(16):
+            s[i] ^= (rk[rnd * 4 + i // 4] >> (24 - 8 * (i % 4))) & 0xff
+
+    # Final round (no MixColumns)
+    s = [_SBOX[b] for b in s]
+    s[1], s[5], s[9], s[13] = s[5], s[9], s[13], s[1]
+    s[2], s[6], s[10], s[14] = s[10], s[14], s[2], s[6]
+    s[3], s[7], s[11], s[15] = s[15], s[3], s[7], s[11]
+    for i in range(16):
+        s[i] ^= (rk[nr * 4 + i // 4] >> (24 - 8 * (i % 4))) & 0xff
+
+    return bytes(s)
+
+
+def _format_orig_number(value: float) -> str:
+    """Format numbers like original save text (culture-invariant)."""
+    v = float(value)
+    if not math.isfinite(v):
+        return "0"
+    text = format(v, ".17g")
+    return text.replace("e", "E")
+
+
+def _build_original_export_text(sim: Simulation) -> str | None:
+    """Build encrypted Reactor Idle-compatible export text."""
+    component_entries: list[str] = []
+    sorted_components = sorted(sim.components, key=lambda c: (c.grid_z, c.grid_y, c.grid_x))
+    for comp in sorted_components:
+        type_idx = _ORIG_NAME_TO_INDEX.get(comp.stats.name)
+        if type_idx is None:
+            print(f"[save] Warning: cannot export unknown component '{comp.stats.name}', skipping")
+            continue
+        component_entries.append(
+            ",".join(
+                [
+                    str(comp.grid_x),
+                    str(comp.grid_y),
+                    str(comp.grid_z),
+                    str(type_idx),
+                    _format_orig_number(comp.heat),
+                    _format_orig_number(comp.durability),
+                ]
+            )
+        )
+    components_str = ";".join(component_entries)
+    if components_str:
+        components_str += ";"
+
+    upgrade_levels = ";".join(str(max(0, int(u.level))) for u in sim.upgrade_manager.upgrades)
+    if upgrade_levels:
+        upgrade_levels += ";"
+
+    fields = [
+        ("BuildVersion", str(_ORIG_BUILD_VERSION)),
+        ("Money", _format_orig_number(sim.store.money)),
+        ("Heat", _format_orig_number(sim.reactor_heat)),
+        ("Power", _format_orig_number(sim.stored_power)),
+        ("ProtiumDepleted", str(max(0, int(sim.depleted_protium_count)))),
+        ("TotalHeat", _format_orig_number(sim.store.total_heat_dissipated)),
+        ("TotalPower", _format_orig_number(sim.store.total_power_produced)),
+        ("HeatThisGame", _format_orig_number(sim.store.heat_dissipated_this_game)),
+        ("PowerThisGame", _format_orig_number(sim.store.power_produced_this_game)),
+        ("MoneyThisGame", _format_orig_number(sim.store.money_earned_this_game)),
+        ("TotalMoney", _format_orig_number(sim.store.total_money)),
+        ("CurrentExoticParticles", _format_orig_number(sim.store.exotic_particles)),
+        ("TotalExoticParticles", _format_orig_number(sim.store.total_exotic_particles)),
+        ("CellsReplace", "1" if sim.replace_mode else "0"),
+        ("Paused", "1" if sim.paused else "0"),
+        ("Components", components_str),
+        ("Upgrades", upgrade_levels),
+    ]
+    plaintext = "|".join(f"{key}:{value}" for key, value in fields) + "|"
+    return _encrypt_original(plaintext)
+
+
 def _parse_original_save(text: str) -> dict | None:
     """Parse original game pipe-delimited save format into our dict format.
 
@@ -337,6 +492,7 @@ def _parse_original_save(text: str) -> dict | None:
         "upgrade_levels": upgrade_levels,
         "reactor_heat": float(fields.get("Heat", "0")),
         "stored_power": float(fields.get("Power", "0")),
+        "depleted_protium_count": int(float(fields.get("ProtiumDepleted", "0"))),
         "paused": paused,
         "replace_mode": replace,
         "total_ticks": 0,
@@ -609,10 +765,11 @@ if _WEB:
         return _restore_from_dict(sim, data)
 
     def export_save(sim: Simulation, path=None) -> None:
-        """Export: build save dict -> JSON -> base64 -> trigger browser download."""
-        data = _build_save_dict(sim)
-        json_str = json.dumps(data, separators=(",", ":"))
-        encoded = base64.b64encode(json_str.encode("utf-8")).decode("ascii")
+        """Export original Reactor Idle-compatible encrypted save text."""
+        encoded = _build_original_export_text(sim)
+        if encoded is None:
+            print("[save] Error exporting save: failed to build encrypted export")
+            return
         try:
             from js import document, window, Blob, URL  # type: ignore
             blob = Blob.new([encoded], {"type": "text/plain"})
@@ -669,10 +826,11 @@ else:
         return _restore_from_dict(sim, data)
 
     def export_save(sim: Simulation, path: Path) -> None:
-        """Export: build save dict -> JSON -> base64 -> write .txt file."""
-        data = _build_save_dict(sim)
-        json_str = json.dumps(data, separators=(",", ":"))
-        encoded = base64.b64encode(json_str.encode("utf-8")).decode("ascii")
+        """Export original Reactor Idle-compatible encrypted save text."""
+        encoded = _build_original_export_text(sim)
+        if encoded is None:
+            print("[save] Error exporting save: failed to build encrypted export")
+            return
         try:
             path.write_text(encoded, encoding="utf-8")
         except OSError as e:

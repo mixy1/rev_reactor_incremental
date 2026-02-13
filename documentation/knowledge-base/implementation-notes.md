@@ -53,3 +53,9 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 - Child frame emits `postMessage` heartbeat every 500ms; host reloads iframe on stalled heartbeat (6s timeout, 20s startup grace).
 - Save persistence remains in web localStorage (`rev_reactor_save`), so iframe restarts do not clear saved progress.
 - Updated iframe sandbox mode to `sandbox="allow-scripts"` and moved save/load/theme state sync to a parent↔child `postMessage` bridge (`RevReactorHostBridge`) so web save persistence still works without `allow-same-origin`.
+
+## Save compatibility note (2026-02-13)
+
+- Export now emits **original Reactor Idle encrypted save text** (AES-256-CBC with the game's PasswordDeriveBytes-compatible key derivation) instead of base64-JSON.
+- Import support remains backward-compatible with all three formats: raw JSON, base64-JSON, and original encrypted text.
+- Original `ProtiumDepleted` now round-trips through import/export (`depleted_protium_count`).
