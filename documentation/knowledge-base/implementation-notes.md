@@ -61,3 +61,4 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 - `Export New` emits unrestricted base64-JSON (full reimplementation state, no legacy bounds).
 - Import remains backward-compatible with all three formats: raw JSON, base64-JSON, and original encrypted text.
 - Original `ProtiumDepleted` now round-trips through import/export (`depleted_protium_count`).
+- In sandboxed iframe mode (`sandbox="allow-scripts"`), exports now route through the host page via `postMessage` (`rev-reactor-download`) so file downloads still work without relaxing iframe sandbox flags.

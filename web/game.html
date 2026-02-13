@@ -81,6 +81,22 @@
                 }
             }
 
+            function downloadTextLocal(filename, text) {
+                const safeName = typeof filename === 'string' && filename.trim()
+                    ? filename.trim()
+                    : 'rev_reactor_save.txt';
+                const payload = typeof text === 'string' ? text : String(text ?? '');
+                const blob = new Blob([payload], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = safeName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+
             window.RevReactorHostBridge = {
                 waitUntilReady(timeoutMs = 2000) {
                     if (state.ready) return Promise.resolve(true);
@@ -112,6 +128,17 @@
                 },
                 getTheme() {
                     return state.theme;
+                },
+                downloadText(filename, text) {
+                    if (window.parent && window.parent !== window) {
+                        window.parent.postMessage(
+                            { type: 'rev-reactor-download', filename, text },
+                            '*'
+                        );
+                        return true;
+                    }
+                    downloadTextLocal(filename, text);
+                    return true;
                 },
             };
 

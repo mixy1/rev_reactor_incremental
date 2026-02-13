@@ -193,6 +193,22 @@
                 }
             }
 
+            function triggerDownload(filename, text) {
+                const safeName = typeof filename === 'string' && filename.trim()
+                    ? filename.trim()
+                    : 'rev_reactor_save.txt';
+                const payload = typeof text === 'string' ? text : String(text ?? '');
+                const blob = new Blob([payload], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = safeName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+
             function postHostStateToGame() {
                 if (!frame.contentWindow) return;
                 frame.contentWindow.postMessage(
@@ -245,6 +261,15 @@
 
                 if (data.type === 'rev-reactor-save-write') {
                     writeSavedGame(data.saveText);
+                    return;
+                }
+
+                if (data.type === 'rev-reactor-download') {
+                    try {
+                        triggerDownload(data.filename, data.text);
+                    } catch (err) {
+                        console.warn('Failed to download save data from iframe:', err);
+                    }
                 }
             });
 

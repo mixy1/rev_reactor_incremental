@@ -772,6 +772,17 @@ if _WEB:
             pass
         return False
 
+    def _bridge_download_text(filename: str, text: str) -> bool:
+        try:
+            from js import window  # type: ignore
+            bridge = getattr(window, "RevReactorHostBridge", None)
+            if bridge is not None and hasattr(bridge, "downloadText"):
+                bridge.downloadText(filename, text)
+                return True
+        except Exception:
+            pass
+        return False
+
     def save_game(sim: Simulation, path=None) -> None:
         """Auto-save to localStorage."""
         data = _build_save_dict(sim)
@@ -831,7 +842,8 @@ if _WEB:
             print("[save] Error exporting save: failed to build encrypted export")
             return
         try:
-            _download_text("rev_reactor_save_old.txt", encoded)
+            if not _bridge_download_text("rev_reactor_save_old.txt", encoded):
+                _download_text("rev_reactor_save_old.txt", encoded)
         except Exception as e:
             print(f"[save] Error exporting save: {e}")
 
@@ -839,7 +851,8 @@ if _WEB:
         """Export unrestricted new-format base64-JSON save text."""
         encoded = _build_new_export_text(sim)
         try:
-            _download_text("rev_reactor_save_new.txt", encoded)
+            if not _bridge_download_text("rev_reactor_save_new.txt", encoded):
+                _download_text("rev_reactor_save_new.txt", encoded)
         except Exception as e:
             print(f"[save] Error exporting new save: {e}")
 
