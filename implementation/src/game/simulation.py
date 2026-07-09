@@ -1167,6 +1167,62 @@ class Simulation:
 
         return value
 
+    def replace_all_components_of_type(
+        self,
+        type_name: str,
+        replacement: ComponentTypeStats,
+        required_depletion_state: Optional[bool] = None,
+    ) -> None:
+        """RE: Controller.ReplaceAllComponentsOfType (dump.cs:76765) — shift+left-click.
+
+        Replaces every component whose type matches ``type_name`` (and whose
+        depletion state matches ``required_depletion_state``, when given) with
+        the selected shop component. Each swap only happens if affordable,
+        with the refund counting toward the price (RE: CanAffordReplacement).
+        """
+        if self.grid is None:
+            return
+        for x, y, z, comp in list(self.grid.iter_cells()):
+            if comp is None or comp.stats.name != type_name:
+                continue
+            if (required_depletion_state is not None
+                    and comp.depleted != required_depletion_state):
+                continue
+            if not Simulation.can_replace(comp, replacement):
+                continue
+            cost = self.get_component_cost(replacement)
+            refund = Simulation.sell_value(comp)
+            if self.store.money + refund < cost:
+                continue
+            self.remove_component(x, y, z)
+            self.store.money += refund
+            if self.place_component(x, y, ReactorComponent(stats=replacement), z=z):
+                self.store.money -= cost
+
+    def sell_all_components_of_type(
+        self,
+        type_name: str,
+        required_depletion_state: Optional[bool] = None,
+    ) -> None:
+        """RE: Controller.SellAllComponentsOfType (dump.cs:76771) — shift+right-click.
+
+        Sells every component whose type matches ``type_name`` and whose
+        depletion state matches ``required_depletion_state`` (when given):
+        shift+right-click on a depleted cell sells only depleted ones, on a
+        live cell only non-depleted ones.
+        """
+        if self.grid is None:
+            return
+        for x, y, z, comp in list(self.grid.iter_cells()):
+            if comp is None or comp.stats.name != type_name:
+                continue
+            if (required_depletion_state is not None
+                    and comp.depleted != required_depletion_state):
+                continue
+            refund = Simulation.sell_value(comp)
+            self.remove_component(x, y, z)
+            self.store.money += refund
+
     def reset_game(self) -> None:
         """Reset all game state (grid, money, power, heat, stats, upgrades).
 

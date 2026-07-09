@@ -29,6 +29,7 @@ from raylib_compat import (
     get_mouse_wheel_move,
     get_time,
     is_key_pressed,
+    is_shift_down,
     init_window,
     is_mouse_button_down,
     is_mouse_button_pressed,
@@ -490,6 +491,14 @@ async def main() -> None:
                             if sim.store.money >= cost:
                                 if sim.place_component(cx, cy, ReactorComponent(stats=selected)):
                                     sim.store.money -= cost
+                        elif is_shift_down():
+                            # RE: Controller.ReplaceAllComponentsOfType — shift+left-click
+                            # replaces every component of the clicked cell's type that
+                            # shares its depletion state. Fires once per press.
+                            if (is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+                                    and Simulation.can_replace(existing, selected)):
+                                sim.replace_all_components_of_type(
+                                    existing.stats.name, selected, existing.depleted)
                         elif Simulation.can_replace(existing, selected):
                             # Click-to-replace: always active for compatible components
                             cost = sim.get_component_cost(selected)
@@ -516,9 +525,18 @@ async def main() -> None:
                 else:
                     cell = sim.grid.screen_to_cell_unbounded(int(mx), int(my))
                 if cell is not None:
-                    if cell != last_sell_cell:
-                        cx, cy = cell
-                        existing = sim.grid.get(cx, cy, 0)
+                    cx, cy = cell
+                    existing = sim.grid.get(cx, cy, 0)
+                    if existing is not None and is_shift_down():
+                        # RE: Controller.SellAllComponentsOfType — shift+right-click
+                        # sells every component of the clicked cell's type that
+                        # shares its depletion state (depleted → only depleted,
+                        # live → only live). Fires once per press.
+                        if is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+                            sim.sell_all_components_of_type(
+                                existing.stats.name, existing.depleted)
+                            last_sell_cell = cell
+                    elif cell != last_sell_cell:
                         if existing is not None:
                             refund = Simulation.sell_value(existing)
                             sim.remove_component(cx, cy)

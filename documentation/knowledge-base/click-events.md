@@ -56,7 +56,8 @@ all reactor grid + shop input every frame.
 │      ├─ Check compatibility    → unnamed_function_10462
 │      ├─ Check if cell occupied → unnamed_function_10365
 │      │
-│      ├─ Key 0x130 / 0x12F pressed: (keyboard shortcuts, skip to goto)
+│      ├─ Key 0x130 / 0x12F held: LeftShift / RightShift (KeyCode 304 / 303)
+│      │   └─ Shift-click bulk operations (see "Shift-Click Bulk Operations")
 │      │
 │      ├─ LMB NOT held (2344, button 0 == 0):
 │      │   ├─ RMB held (2344, button 1 == 1):
@@ -157,6 +158,29 @@ you left-click a cell that already has a component:
 2. Then `unnamed_function_10466` is called to **place the new component**
 
 This is the two-step: sell-then-place that makes Replace mode work.
+
+---
+
+### SHIFT-CLICK — Bulk Operations (Replace All / Sell All)
+
+The two "mystery keys" polled in the input update, `0x130` and `0x12F`, are
+Unity `KeyCode.LeftShift` (304) and `KeyCode.RightShift` (303). Holding shift
+switches grid clicks to the bulk operations exposed by the Controller class
+(dump.cs):
+
+- `ReplaceAllComponentsOfType(ComponentType type, ComponentType replacementType, Maybe<bool> requiredDepletionState)` — dump.cs:76765
+- `SellAllComponentsOfType(ComponentType type, Maybe<bool> requiredDepletionState)` — dump.cs:76771
+- `CanAffordReplacement(ReactorComponent componentToBeSold, ComponentType replacementType)` — dump.cs:76777
+
+**Behavior (verified by testing the original game, 2026-07-09):**
+
+- **Shift + left-click** an occupied cell with a component selected:
+  replaces **all** components of the clicked cell's type with the selected
+  component (refund counts toward each replacement's price).
+- **Shift + right-click** an occupied cell: sells **all** components of the
+  clicked cell's type — filtered by the clicked cell's depletion state.
+  Clicking a depleted cell sells only depleted ones; clicking a live cell
+  sells only live ones (`requiredDepletionState` = clicked cell's state).
 
 ---
 
@@ -366,8 +390,8 @@ Guarded by a debug flag at `param1 + 0xC` (only active in debug builds):
 | 0x123 | ? | `GetKey` (held) + debug | `reactor.counter++` |
 | 0x1B | ESC | Always | Deselect component / close shop overlay |
 | 0x20 | Space | Always | Toggle pause (PauseButton.IsToggled) |
-| 0x130 | ? | Always | (keyboard shortcut, skips to goto) |
-| 0x12F | ? | Always | (keyboard shortcut, skips to goto) |
+| 0x130 | LeftShift | Held | Shift-click bulk ops (replace all / sell all of type) |
+| 0x12F | RightShift | Held | Shift-click bulk ops (replace all / sell all of type) |
 
 ---
 
@@ -467,6 +491,8 @@ Grid data array at `Reactor + 0x24`. Each cell is 0x20 (32) bytes:
 |-----|-------|--------|
 | ESC (0x1B) | Pressed | Deselect / close shop overlay |
 | Space (0x20) | Pressed | Toggle pause |
+| Shift (0x12F/0x130) | Held + LMB on occupied cell | Replace all components of clicked type with selection |
+| Shift (0x12F/0x130) | Held + RMB on occupied cell | Sell all of clicked type (matching depletion state) |
 
 ---
 
@@ -483,4 +509,6 @@ Grid data array at `Reactor + 0x24`. Each cell is 0x20 (32) bytes:
 | Fuel cell refund | $0 (unless prestige) | Full refund | Needs fix |
 | ESC deselect | Deselects component | Not implemented | Missing |
 | Space toggle pause | Toggles simulation pause | Not implemented | Missing |
+| Shift+LMB replace all of type | `ReplaceAllComponentsOfType` | Implemented (2026-07-09) | Correct |
+| Shift+RMB sell all of type | `SellAllComponentsOfType` (depletion-filtered) | Implemented (2026-07-09) | Correct |
 | Scrounge | When empty + no power | When empty + money+power < 10 | Close enough |

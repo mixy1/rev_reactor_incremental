@@ -55,6 +55,7 @@ if not _WEB:
         "end_drawing": "EndDrawing",
         "get_frame_time": "GetFrameTime",
         "is_key_pressed": "IsKeyPressed",
+        "is_key_down": "IsKeyDown",
         "load_texture": "LoadTexture",
         "unload_texture": "UnloadTexture",
         "draw_text": "DrawText",
@@ -82,6 +83,17 @@ if not _WEB:
 
     if "MOUSE_BUTTON_MIDDLE" not in globals():
         MOUSE_BUTTON_MIDDLE = 2  # type: ignore
+
+    if "KEY_LEFT_SHIFT" not in globals():
+        KEY_LEFT_SHIFT = 340  # type: ignore
+    if "KEY_RIGHT_SHIFT" not in globals():
+        KEY_RIGHT_SHIFT = 344  # type: ignore
+
+    def is_shift_down() -> bool:
+        _down = globals().get("is_key_down")
+        if _down is None:
+            return False
+        return bool(_down(KEY_LEFT_SHIFT)) or bool(_down(KEY_RIGHT_SHIFT))
 
     def _encode_text(value):  # type: ignore
         if isinstance(value, str):
@@ -381,6 +393,13 @@ else:
 
     def is_key_pressed(key: int) -> bool:
         return key in _input_state.get('keysPressed', [])
+
+    def is_key_down(key: int) -> bool:
+        return key in _input_state.get('keysDown', [])
+
+    def is_shift_down() -> bool:
+        # JS keyCode 16 covers both left and right shift
+        return 16 in _input_state.get('keysDown', [])
 
     # ── Utilities ────────────────────────────────────────────────────
 

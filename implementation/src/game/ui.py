@@ -1187,6 +1187,12 @@ def _build_help_content(content_w: int) -> tuple[list, float]:
         "auto-sells the old component and places the new one."
     )
     _text(
+        "Shift + left-click a placed component to replace ALL components "
+        "of that type with your selected one. Shift + right-click to sell "
+        "ALL components of that type (depleted cells and live cells are "
+        "treated separately - you sell only the kind you clicked)."
+    )
+    _text(
         "Middle-click drag or scroll wheel to pan the grid. "
         "Press Space to pause/unpause the simulation."
     )
