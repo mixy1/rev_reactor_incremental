@@ -251,13 +251,13 @@ class Simulation:
             self._distribute_pulses()
             self._pulses_dirty = False
 
-        # Step 3: DrainDurability
-        self._drain_durability()
-
-        # Step 4: GeneratePowerAndHeat
+        # Step 3: GeneratePowerAndHeat
         power_gen, heat_gen = self._generate_power_and_heat()
         self.last_power_change += power_gen
         self.last_heat_change += heat_gen
+
+        # Step 4: DrainDurability
+        self._drain_durability()
 
         # Step 5: HeatExchange (simplified — exchange between neighbors toward equilibrium)
         self._heat_exchange()
