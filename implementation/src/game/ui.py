@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 import math
 import re
 from typing import Optional
@@ -26,7 +27,7 @@ from raylib_compat import (
 from game.layout import Layout
 from game.types import ComponentTypeStats
 from game.simulation import ReactorComponent, Simulation
-from game.upgrades import UpgradeManager, UpgradeType
+from game.upgrades import UpgradeType
 
 
 @dataclass
@@ -60,6 +61,12 @@ class Ui:
     help_scroll_y: float = 0.0  # scroll offset for help panel
     help_drag_active: bool = False  # drag-to-scroll state
     help_drag_last_y: float = 0.0
+    _store_slots_cache_key: tuple[int, tuple[str, ...]] | None = field(
+        default=None, init=False, repr=False
+    )
+    _store_slots_cache: list[tuple[ComponentTypeStats, tuple[int, int, int, int]]] = field(
+        default_factory=list, init=False, repr=False
+    )
 
     @staticmethod
     def draw_warning_badge(x: int, y: int, size: int = 12) -> None:
@@ -175,7 +182,6 @@ class Ui:
 
         # Vent Heat button (RE: "-{ventAmount} Heat (-{ventRate} per tick)")
         vent_amt = format_number_with_suffix(sim.manual_vent_amount, max_decimals=2)
-        vent_rate = format_number_with_suffix(sim.auto_vent_rate_per_tick(), max_decimals=2)
         vent_cap = format_number_with_suffix(sim.preview_active_dissipation, max_decimals=3)
         label = f"-{vent_amt} Heat (cap {vent_cap}/t)"
         bx, by = layout.vent_x, layout.vent_y
@@ -325,6 +331,10 @@ class Ui:
         if not components:
             return []
 
+        cache_key = (id(layout), tuple(comp.name for comp in components))
+        if self._store_slots_cache_key == cache_key:
+            return self._store_slots_cache
+
         cols = 5
         slot_w = layout.store_area_w / cols
         slot_h = layout.store_row_h
@@ -341,6 +351,8 @@ class Ui:
             x = start_x + col * slot_w
             y = layout.store_area_y + (row + 1) * (row_h + sep_h) + (row_h - slot_h) // 2
             slots.append((comp, (int(x), int(y), int(slot_w), int(slot_h))))
+        self._store_slots_cache_key = cache_key
+        self._store_slots_cache = slots
         return slots
 
     def draw_component_info(self, sim: Simulation, layout: Layout) -> None:
@@ -364,7 +376,6 @@ class Ui:
 
         panel_x = layout.top_panel_x
         panel_y = layout.top_panel_y
-        panel_w = layout.top_panel_w
         panel_h = layout.top_panel_h
         margin = 14
         font_sm = 12
@@ -617,7 +628,6 @@ class Ui:
         """
         panel_x = layout.top_panel_x
         panel_y = layout.top_panel_y
-        panel_w = layout.top_panel_w
         panel_h = layout.top_panel_h
         margin = 14
         font_sm = 12
@@ -673,7 +683,6 @@ class Ui:
         panel_x = layout.top_panel_x
         panel_y = layout.top_panel_y
         panel_w = layout.top_panel_w
-        panel_h = layout.top_panel_h
         text_color = Color(230, 230, 230, 255)
 
         if self.top_banner is not None:
@@ -701,7 +710,7 @@ class Ui:
         # Stat lines
         fmt = format_number_with_suffix
         lines = [
-            f"Build Version: 1",
+            "Build Version: 1",
             "",
             f"Current Money: {fmt(sim.store.money)}",
             f"Total Money: {fmt(sim.store.total_money)}",
@@ -747,7 +756,6 @@ class Ui:
         panel_x = layout.top_panel_x
         panel_y = layout.top_panel_y
         panel_w = layout.top_panel_w
-        panel_h = layout.top_panel_h
         text_color = Color(230, 230, 230, 255)
 
         if self.top_banner is not None:
@@ -927,7 +935,6 @@ class Ui:
         panel_x = layout.top_panel_x
         panel_y = layout.top_panel_y
         panel_w = layout.top_panel_w
-        panel_h = layout.top_panel_h
 
         if self.top_banner is not None:
             draw_texture_ex(
@@ -1107,6 +1114,7 @@ _HELP_GRID = 5
 _HELP_SPRITE_ROW = 6
 
 
+@lru_cache(maxsize=4)
 def _build_help_content(content_w: int) -> tuple[list, float]:
     """Build a list of tagged items with pre-computed y-offsets.
 
@@ -1166,10 +1174,7 @@ def _build_help_content(content_w: int) -> tuple[list, float]:
     F = "Fuel1-1.png"
     V = "Vent1.png"
     O = "Outlet1.png"
-    X = "Exchanger1.png"
     R = "Reflector1.png"
-    I = "Inlet1.png"
-    C = "Coolant1.png"
     K = "Capacitor1.png"
     P = "Plate1.png"
 
@@ -1577,6 +1582,7 @@ def _fit_font_size(text: str, max_width: int, base_size: int, min_size: int = 8)
     return min_size
 
 
+@lru_cache(maxsize=4096)
 def _wrap_text(text: str, max_width: int, font_size: int) -> list[str]:
     if not text:
         return []

@@ -11,6 +11,10 @@ from game.types import ComponentTypeStats
 from game.upgrades import UpgradeManager, StatCategory
 
 
+MAX_CATCH_UP_SECONDS = 4.0 * 60.0 * 60.0
+MAX_CATCH_UP_TICKS = 10_000
+
+
 def _fuel_index(name: str) -> Optional[int]:
     match = re.match(r"Fuel(\d+)", name)
     if not match:
@@ -151,6 +155,17 @@ class Simulation:
 
     # Dirty flag for pulse recalculation
     _pulses_dirty: bool = True
+    _preview_dirty: bool = True
+    _preview_upgrade_revision: int = -1
+    _multipliers_dirty: bool = True
+    _multiplier_upgrade_revision: int = -1
+    _shop_cache_key: tuple[int, int, int] | None = field(default=None, repr=False)
+    _shop_cache_components: List[ComponentTypeStats] = field(default_factory=list, repr=False)
+
+    # Most recent wall-clock catch-up, exposed for diagnostics/UI without
+    # affecting serialized gameplay state.
+    last_catch_up_seconds: float = 0.0
+    last_catch_up_ticks: int = 0
 
     # Tick timing — from unnamed_function_10418 (Simulation.LogicalUpdate):
     #   while (Time.time - lastTick > 1.0 / ticksPerSecond):
@@ -185,6 +200,39 @@ class Simulation:
             self._tick_accumulator -= tick_interval
             self._do_tick()
 
+    def catch_up(self, elapsed_seconds: float) -> int:
+        """Advance missed wall time with bounded, deterministic simulation ticks.
+
+        Browsers can suspend hidden tabs indefinitely. Catch-up is capped by
+        both elapsed time and tick count so reopening cannot lock the UI for an
+        unbounded period.
+        """
+        self.last_catch_up_seconds = 0.0
+        self.last_catch_up_ticks = 0
+        if self.paused or elapsed_seconds <= 0.0:
+            return 0
+
+        elapsed = min(float(elapsed_seconds), MAX_CATCH_UP_SECONDS)
+        self.upgrade_manager.prepare_multipliers(self)
+        tick_interval = 1.0 / self.ticks_per_second if self.ticks_per_second > 0 else 1.0
+        available = self._tick_accumulator + elapsed
+        ticks = min(int(available / tick_interval), MAX_CATCH_UP_TICKS)
+        if ticks <= 0:
+            self._tick_accumulator = available
+            return 0
+
+        for _ in range(ticks):
+            self._do_tick()
+
+        consumed = ticks * tick_interval
+        self._tick_accumulator = max(0.0, available - consumed)
+        # Discard time beyond the safety cap instead of causing repeated bursts.
+        if ticks == MAX_CATCH_UP_TICKS:
+            self._tick_accumulator %= tick_interval
+        self.last_catch_up_seconds = min(elapsed, consumed)
+        self.last_catch_up_ticks = ticks
+        return ticks
+
     def _do_tick(self) -> None:
         """Execute one simulation tick following the decoded pipeline."""
         self.reactor_heat = max(0.0, self.reactor_heat)
@@ -197,9 +245,6 @@ class Simulation:
 
         # Step 1: PrepareMultipliers
         self.upgrade_manager.prepare_multipliers(self)
-        self.preview_vent_capacity = self.vent_dissipation_capacity_per_tick()
-        self.preview_outlet_capacity = self.outlet_transfer_capacity_per_tick()
-        self.preview_active_dissipation = self.active_dissipation_capacity_per_tick()
 
         # Step 2: DistributePulses (recalc when layout changes)
         if self._pulses_dirty:
@@ -289,6 +334,7 @@ class Simulation:
         # Update resource store for UI
         self.store.power = self.stored_power
         self.store.heat = self.reactor_heat
+        self._preview_dirty = True
 
     def _distribute_pulses(self) -> None:
         """RE: unnamed_function_10441 — distribute pulses to self and cardinal neighbors.
@@ -308,11 +354,13 @@ class Simulation:
         for comp in self.components:
             comp.pulse_count = 0
 
-        for x, y, z, comp in self.grid.iter_cells():
-            if comp is None or comp.depleted:
+        for comp in self.components:
+            if comp.depleted:
                 continue
             if comp.stats.pulses_produced <= 0:
                 continue  # not a fuel cell
+
+            x, y, z = comp.grid_x, comp.grid_y, comp.grid_z
 
             pulses = int(comp.stats.pulses_produced)
             cores = comp.stats.number_of_cores
@@ -347,6 +395,8 @@ class Simulation:
         """Fuel cells lose 1 durability/tick. Reflectors lose neighbor pulse sum."""
         if self.grid is None:
             return
+        # Preserve the binary's grid-order processing: a fuel cell can become
+        # depleted before a later reflector inspects its neighbors.
         for x, y, z, comp in self.grid.iter_cells():
             if comp is None or comp.depleted:
                 continue
@@ -366,6 +416,7 @@ class Simulation:
                     else:
                         comp.depleted = True
                     self._pulses_dirty = True
+                    self._multipliers_dirty = True
 
             # Reflectors: lose durability = sum of neighbor PulsesProduced
             if comp.stats.reflects_pulses > 0 and comp.stats.max_durability > 0:
@@ -404,11 +455,13 @@ class Simulation:
             cell_eff = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.CELL_EFFECTIVENESS)
             overheat_mult = (math.log(self.reactor_heat) / math.log(1000.0)) * (cell_eff - 1.0) * 0.01 + 1.0
 
-        for x, y, z, comp in self.grid.iter_cells():
-            if comp is None or comp.depleted:
+        for comp in self.components:
+            if comp.depleted:
                 continue
             if comp.stats.energy_per_pulse <= 0:
                 continue  # not a fuel cell
+
+            x, y, z = comp.grid_x, comp.grid_y, comp.grid_z
 
             pulse_count = comp.pulse_count
             tid = comp.stats.component_type_id
@@ -500,11 +553,13 @@ class Simulation:
             cell_eff = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.CELL_EFFECTIVENESS)
             overheat_mult = (math.log(self.reactor_heat) / math.log(1000.0)) * (cell_eff - 1.0) * 0.01 + 1.0
 
-        for x, y, z, comp in self.grid.iter_cells():
-            if comp is None or comp.depleted:
+        for comp in self.components:
+            if comp.depleted:
                 continue
             if comp.stats.energy_per_pulse <= 0:
                 continue
+
+            x, y, z = comp.grid_x, comp.grid_y, comp.grid_z
 
             pulse_count = comp.pulse_count
             tid = comp.stats.component_type_id
@@ -572,6 +627,7 @@ class Simulation:
         """
         if self.grid is None:
             return
+        # Exchange is sequential, so its ordering is gameplay-significant.
         for x, y, z, comp in self.grid.iter_cells():
             if comp is None or comp.depleted:
                 continue
@@ -761,12 +817,17 @@ class Simulation:
 
         # Build destruction list
         to_destroy = []
+        heat_capacity_multipliers: dict[int, float] = {}
         for comp in self.components:
             if comp.depleted:
                 continue
             if comp.stats.heat_capacity > 0:
-                eff_cap = comp.stats.heat_capacity * self._stat_mult(
-                    comp.stats.component_type_id, StatCategory.HEAT_CAPACITY)
+                tid = comp.stats.component_type_id
+                cap_mult = heat_capacity_multipliers.get(tid)
+                if cap_mult is None:
+                    cap_mult = self._stat_mult(tid, StatCategory.HEAT_CAPACITY)
+                    heat_capacity_multipliers[tid] = cap_mult
+                eff_cap = comp.stats.heat_capacity * cap_mult
                 if is_meltdown or comp.heat >= eff_cap:
                     to_destroy.append(comp)
             else:
@@ -786,6 +847,7 @@ class Simulation:
 
         if to_destroy:
             self._pulses_dirty = True
+            self._multipliers_dirty = True
             self.recompute_max_capacities()
 
         # Clamp small heat residuals on surviving components
@@ -795,6 +857,8 @@ class Simulation:
 
     def update_explosions(self, dt: float) -> None:
         """Advance explosion animations. Runs even when paused (cosmetic only)."""
+        if not self.explosions:
+            return
         for effect in self.explosions:
             effect.time += dt
             effect.frame = int(effect.time * effect.fps)
@@ -828,6 +892,7 @@ class Simulation:
         vented = min(self.reactor_heat, self.manual_vent_amount)
         self.reactor_heat = max(0.0, self.reactor_heat - vented)
         self.store.heat = self.reactor_heat
+        self._preview_dirty = True
         return vented
 
     def auto_vent_rate_per_tick(self) -> float:
@@ -940,6 +1005,10 @@ class Simulation:
         This keeps UI values responsive when the reactor is paused or when a panel
         is open and ticks are suppressed.
         """
+        upgrade_revision = self.upgrade_manager.revision
+        if not self._preview_dirty and self._preview_upgrade_revision == upgrade_revision:
+            return
+
         self.reactor_heat = max(0.0, self.reactor_heat)
         self.upgrade_manager.prepare_multipliers(self)
         if self._pulses_dirty:
@@ -960,6 +1029,8 @@ class Simulation:
         self.preview_vent_capacity = self.vent_dissipation_capacity_per_tick()
         self.preview_outlet_capacity = self.outlet_transfer_capacity_per_tick()
         self.preview_active_dissipation = self.active_dissipation_capacity_per_tick()
+        self._preview_dirty = False
+        self._preview_upgrade_revision = upgrade_revision
 
     def auto_sell_rate_per_tick(self) -> float:
         """RE: unnamed_function_10417 — auto-sell rate shown on sell button.
@@ -1016,6 +1087,7 @@ class Simulation:
         for u in self.upgrade_manager.upgrades:
             if not u.is_prestige:
                 u.level = 0
+        self.upgrade_manager.invalidate_cache()
 
         self.selected_component_index = -1
         self.replace_mode = True  # RE: fn 10481 sets Controller+0xA1
@@ -1037,6 +1109,7 @@ class Simulation:
         for u in self.upgrade_manager.upgrades:
             if u.is_prestige:
                 u.level = 0
+        self.upgrade_manager.invalidate_cache()
         self.store.exotic_particles = self.store.total_exotic_particles
         self.prestige_can_refund = False
 
@@ -1056,11 +1129,13 @@ class Simulation:
         if new_w != self.grid.width or new_h != self.grid.height:
             self.grid.resize(new_w, new_h)
             self._pulses_dirty = True
+            self._multipliers_dirty = True
 
     def recompute_max_capacities(self) -> None:
         """RE: unnamed_function_10412/10413 — recompute maxHeat and maxPower.
         Base = GetStatCached(1, stat) * 1000.0 + sum of component contributions.
         Upgrade multipliers: power_cap_mult / heat_cap_mult scale the base."""
+        self.upgrade_manager.prepare_multipliers(self)
         heat_base_mult = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.REACTOR_HEAT_CAP_INCREASE)
         power_base_mult = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.REACTOR_POWER_CAP_INCREASE)
         base_heat = heat_base_mult * 1000.0
@@ -1074,6 +1149,7 @@ class Simulation:
             base_power += comp.stats.reactor_power_capacity_increase * power_inc_bonus
         self.max_reactor_heat = base_heat * self.heat_cap_mult
         self.max_reactor_power = base_power * self.power_cap_mult
+        self._preview_dirty = True
 
     def count_components_of_type(self, type_prefix: str) -> int:
         """Count placed components whose type_of_component or name starts with prefix."""
@@ -1254,6 +1330,7 @@ class Simulation:
         # Reset ALL upgrades (RE: fn 10330)
         for u in self.upgrade_manager.upgrades:
             u.level = 0
+        self.upgrade_manager.invalidate_cache()
         # Clear prestige state flags
         self.prestige_confirming = False
         self.prestige_can_refund = False
@@ -1276,6 +1353,7 @@ class Simulation:
         self.grid.set(x, y, z, component)
         self.components.append(component)
         self._pulses_dirty = True
+        self._multipliers_dirty = True
         self.recompute_max_capacities()
         return True
 
@@ -1291,6 +1369,7 @@ class Simulation:
         except ValueError:
             pass
         self._pulses_dirty = True
+        self._multipliers_dirty = True
         self.recompute_max_capacities()
         return existing
 
@@ -1315,6 +1394,9 @@ class Simulation:
                         self.selected_component_index = -1
                     page = fallback
                     break
+        cache_key = (page, self.upgrade_manager.revision, self.prestige_level)
+        if self._shop_cache_key == cache_key:
+            return self._shop_cache_components
         components = [comp for comp in self.shop_components if comp.shop_page == page]
         if not components:
             components = [comp for comp in self.shop_components if _component_shop_page(comp.name) == page]
@@ -1328,10 +1410,13 @@ class Simulation:
                 if mgr.upgrades[comp.required_upgrade].level == 0:
                     continue
             visible.append(comp)
-        return sorted(
+        result = sorted(
             visible,
             key=lambda comp: (comp.shop_row, comp.shop_col, comp.shop_order, comp.name),
         )
+        self._shop_cache_key = cache_key
+        self._shop_cache_components = result
+        return result
 
     def shop_page_locked(self, page: int) -> bool:
         if page <= 1:

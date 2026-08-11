@@ -43,21 +43,36 @@ globalThis.Renderer = (() => {
         _emModule = mod;
     }
 
-    // Temp canvas for color tinting (object reused across calls)
-    let _tintCanvas = null;
-    let _tintCtx = null;
-    const _tintResult = { canvas: null, ctx: null };
+    // Color-tinted sprite variants are immutable. Cache their composite once
+    // per source image/region/tint instead of rebuilding them every frame.
+    const _tintCache = new WeakMap();
 
-    function getTintCanvas(w, h) {
-        if (!_tintCanvas) {
-            _tintCanvas = document.createElement('canvas');
-            _tintCtx = _tintCanvas.getContext('2d');
-            _tintResult.canvas = _tintCanvas;
-            _tintResult.ctx = _tintCtx;
+    function getTintedImage(img, sx, sy, sw, sh, r, g, b) {
+        let variants = _tintCache.get(img);
+        if (!variants) {
+            variants = new Map();
+            _tintCache.set(img, variants);
         }
-        if (_tintCanvas.width < w) _tintCanvas.width = w;
-        if (_tintCanvas.height < h) _tintCanvas.height = h;
-        return _tintResult;
+        const key = `${sx},${sy},${sw},${sh},${r|0},${g|0},${b|0}`;
+        let tinted = variants.get(key);
+        if (tinted) return tinted;
+
+        const tw = Math.ceil(Math.abs(sw));
+        const th = Math.ceil(Math.abs(sh));
+        if (tw === 0 || th === 0) return null;
+        tinted = document.createElement('canvas');
+        tinted.width = tw;
+        tinted.height = th;
+        const tctx = tinted.getContext('2d');
+        tctx.imageSmoothingEnabled = false;
+        tctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+        tctx.globalCompositeOperation = 'multiply';
+        tctx.fillStyle = rgb(r, g, b);
+        tctx.fillRect(0, 0, tw, th);
+        tctx.globalCompositeOperation = 'destination-in';
+        tctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+        variants.set(key, tinted);
+        return tinted;
     }
 
     function registerTexture(name, img) {
@@ -144,36 +159,13 @@ globalThis.Renderer = (() => {
             return;
         }
 
-        // Grayscale dim used to approximate with alpha, but that makes
-        // textures transparent instead of darker.  Fall through to the
-        // proper multiply-composite path below.
-
-        // Color tint (e.g. green highlight) — offscreen composite
-        const tw = Math.ceil(Math.abs(sw));
-        const th = Math.ceil(Math.abs(sh));
-        if (tw === 0 || th === 0) return;
-
-        const { canvas: tc, ctx: tctx } = getTintCanvas(tw, th);
-        tctx.clearRect(0, 0, tw, th);
-
-        // Draw source region
-        tctx.globalCompositeOperation = 'source-over';
-        tctx.globalAlpha = 1;
-        tctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
-
-        // Multiply with tint color
-        tctx.globalCompositeOperation = 'multiply';
-        tctx.fillStyle = rgb(r, g, b);
-        tctx.fillRect(0, 0, tw, th);
-
-        // Restore alpha from original
-        tctx.globalCompositeOperation = 'destination-in';
-        tctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+        const tinted = getTintedImage(img, sx, sy, sw, sh, r, g, b);
+        if (!tinted) return;
 
         // Blit to main canvas
         const prev = ctx.globalAlpha;
         ctx.globalAlpha = a / 255;
-        ctx.drawImage(tc, 0, 0, tw, th, dx, dy, dw, dh);
+        ctx.drawImage(tinted, 0, 0, tinted.width, tinted.height, dx, dy, dw, dh);
         ctx.globalAlpha = prev;
     }
 
@@ -287,16 +279,53 @@ globalThis.Renderer = (() => {
         }
     }
 
-    /** Returns a Promise that resolves on the next frame/tick.
-     * Visible tab: requestAnimationFrame (vsync).
-     * Hidden tab: setTimeout fallback so simulation can keep advancing.
-     */
-    function waitFrame() {
+    const ACTIVE_FRAME_MS = 1000 / 30;
+    const IDLE_FRAME_MS = 1000 / 10;
+    let _lastFrameAt = 0;
+    let _resolvedFrames = 0;
+    const _visibilityWaiters = [];
+
+    function scheduleFrame(resolve, animationActive) {
         if (document.hidden || document.visibilityState !== 'visible') {
-            // Hidden tabs throttle timers, but this still allows periodic ticks.
-            return new Promise(resolve => setTimeout(resolve, 50));
+            _visibilityWaiters.push(() => scheduleFrame(resolve, animationActive));
+            return;
         }
-        return new Promise(resolve => requestAnimationFrame(resolve));
+        requestAnimationFrame((now) => {
+            if (document.hidden || document.visibilityState !== 'visible') {
+                _visibilityWaiters.push(() => scheduleFrame(resolve, animationActive));
+                return;
+            }
+            const inputActive = globalThis.Input && globalThis.Input.wasRecentlyActive();
+            const interval = animationActive || inputActive ? ACTIVE_FRAME_MS : IDLE_FRAME_MS;
+            const remaining = interval - (now - _lastFrameAt);
+            if (remaining > 2) {
+                setTimeout(() => scheduleFrame(resolve, animationActive), remaining);
+                return;
+            }
+            _lastFrameAt = now;
+            _resolvedFrames += 1;
+            resolve(now);
+        });
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden || document.visibilityState !== 'visible') return;
+        _lastFrameAt = 0;
+        const waiters = _visibilityWaiters.splice(0);
+        for (const resume of waiters) resume();
+    });
+
+    /**
+     * Pace visible rendering at 30 fps while interactive/animated and 10 fps
+     * while idle. Hidden tabs do no Python or canvas work; wall time is caught
+     * up when visibility returns.
+     */
+    function waitFrame(animationActive = false) {
+        return new Promise(resolve => scheduleFrame(resolve, Boolean(animationActive)));
+    }
+
+    function getRuntimeStats() {
+        return { resolvedFrames: _resolvedFrames, hidden: document.hidden };
     }
 
     return {
@@ -309,6 +338,7 @@ globalThis.Renderer = (() => {
         renderBatch,
         setWasmMemory,
         waitFrame,
+        getRuntimeStats,
         textures,
         texturesByName,
     };

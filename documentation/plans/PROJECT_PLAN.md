@@ -138,6 +138,8 @@ Steps:
 - [x] Added host↔iframe postMessage save/theme bridge to support `sandbox="allow-scripts"` without `allow-same-origin`.
 - [x] Added `implementation_bevy/` with data loaders, deterministic core tests, playable Bevy grid loop, and save/load/autosave to `save.json`.
 - [x] Added dual export paths in Python options UI: `Export Old` (legacy-bounded encrypted format) and `Export New` (unbounded base64-JSON).
+- [x] Added timestamped web resume/reopen catch-up and hardened the iframe watchdog against false reloads after tab switches.
+- [x] Reduced web CPU usage with visibility-aware/adaptive frame pacing plus simulation, UI, and rendering caches.
 - [ ] Implement upgrade system (stat bonuses, prestige).
 - [ ] Implement save/load (import/export).
 - [ ] Wire remaining UI elements (heat/power bars, info banner, stats panel).

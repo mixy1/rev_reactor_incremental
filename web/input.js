@@ -26,10 +26,19 @@ globalThis.Input = (() => {
 
     // Timing
     let lastTime = performance.now();
+    let lastActivityTime = lastTime;
+    let hiddenAt = document.hidden ? lastTime : null;
+    let pendingInactiveSeconds = 0;
+    let runtimeStarted = false;
+
+    function noteActivity() {
+        lastActivityTime = performance.now();
+    }
 
     // ── Keyboard ────────────────────────────────────────────────────
 
     document.addEventListener('keydown', (e) => {
+        noteActivity();
         // Prevent browser defaults for game keys
         if (e.keyCode >= 112 && e.keyCode <= 115) e.preventDefault(); // F1-F4
         if (e.keyCode === 32) e.preventDefault(); // Space
@@ -41,12 +50,14 @@ globalThis.Input = (() => {
     });
 
     document.addEventListener('keyup', (e) => {
+        noteActivity();
         keysDown.delete(e.keyCode);
     });
 
     // ── Mouse ───────────────────────────────────────────────────────
 
     function updateMousePosition(e) {
+        noteActivity();
         const rect = canvas.getBoundingClientRect();
         mouseX = e.clientX - rect.left;
         mouseY = e.clientY - rect.top;
@@ -61,6 +72,7 @@ globalThis.Input = (() => {
     });
 
     canvas.addEventListener('mousedown', (e) => {
+        noteActivity();
         // Prevent browser auto-scroll on middle click
         if (e.button === 1) e.preventDefault();
 
@@ -81,6 +93,7 @@ globalThis.Input = (() => {
     });
 
     canvas.addEventListener('mouseup', (e) => {
+        noteActivity();
         mouseDown.delete(e.button);
         mouseReleased.add(e.button);
     });
@@ -99,10 +112,32 @@ globalThis.Input = (() => {
     // ── Mouse wheel ─────────────────────────────────────────────────
 
     canvas.addEventListener('wheel', (e) => {
+        noteActivity();
         e.preventDefault();
         // Normalize: positive = scroll up (zoom in / scroll up)
         wheelDelta += -e.deltaY / 100;
     }, { passive: false });
+
+    function releaseHeldInput() {
+        keysDown.clear();
+        mouseDown.clear();
+    }
+
+    window.addEventListener('blur', releaseHeldInput);
+    document.addEventListener('visibilitychange', () => {
+        const now = performance.now();
+        lastTime = now;
+        releaseHeldInput();
+        if (document.hidden || document.visibilityState !== 'visible') {
+            if (hiddenAt === null) hiddenAt = now;
+            return;
+        }
+        if (hiddenAt !== null) {
+            pendingInactiveSeconds += Math.max(0, now - hiddenAt) / 1000;
+            hiddenAt = null;
+        }
+        noteActivity();
+    });
 
     // Do not clear held buttons on mouseleave; we need drag actions to
     // continue when cursor exits and re-enters the game area.
@@ -130,11 +165,16 @@ globalThis.Input = (() => {
 
     function pollInput() {
         const now = performance.now();
-        const hidden = document.hidden || document.visibilityState !== 'visible';
         const rawDt = (now - lastTime) / 1000;
-        // Foreground: cap to avoid giant catch-up after hitches.
-        // Background: fixed step so hidden-time does not turn into big burst dt.
-        const dt = hidden ? 0.05 : Math.min(rawDt, 0.1);
+        // Hidden time and long browser/device stalls are consumed separately
+        // as deterministic catch-up instead of being lost to the frame cap.
+        let dt;
+        if (rawDt > 1.0) {
+            pendingInactiveSeconds += rawDt;
+            dt = 0;
+        } else {
+            dt = Math.min(rawDt, 0.1);
+        }
         lastTime = now;
 
         _state.mouseX = mouseX;
@@ -173,5 +213,31 @@ globalThis.Input = (() => {
         wantFileDialog = true;
     }
 
-    return { pollInput, setFileImport, requestFileDialog };
+    function consumeInactiveSeconds() {
+        if (!runtimeStarted) {
+            // Save loading already accounts for wall time before the Python
+            // runtime starts. Reset here to avoid counting boot time twice.
+            const now = performance.now();
+            runtimeStarted = true;
+            lastTime = now;
+            pendingInactiveSeconds = 0;
+            hiddenAt = document.hidden ? now : null;
+            return 0;
+        }
+        const elapsed = pendingInactiveSeconds;
+        pendingInactiveSeconds = 0;
+        return elapsed;
+    }
+
+    function wasRecentlyActive(windowMs = 1200) {
+        return performance.now() - lastActivityTime <= windowMs;
+    }
+
+    return {
+        pollInput,
+        setFileImport,
+        requestFileDialog,
+        consumeInactiveSeconds,
+        wasRecentlyActive,
+    };
 })();

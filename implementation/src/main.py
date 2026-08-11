@@ -50,6 +50,9 @@ from raylib_compat import (
     get_pending_file_import,
 )
 
+if _WEB:
+    from raylib_compat import get_inactive_time
+
 if not _WEB:
     from raylib_compat import (
         WindowShouldClose,
@@ -69,7 +72,7 @@ if not _WEB:
     from assets import reference_path
 from game.layout import load_layout
 from game.grid import Grid
-from game.simulation import ReactorComponent, ExplosionEffect, demo_simulation
+from game.simulation import ReactorComponent, demo_simulation
 from game.ui import Ui
 
 # Global reference for beforeunload auto-save from JS
@@ -78,6 +81,25 @@ _sim_ref = None
 
 def _load_texture(name: str) -> Texture2D:
     return load_texture(str(sprite_path(name)))
+
+
+def _draw_button_label(
+    label: str,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    base_size: int,
+    min_size: int = 8,
+) -> None:
+    font_size = base_size
+    max_width = max(8, width - 10)
+    while font_size > min_size and measure_text(label, font_size) > max_width:
+        font_size -= 1
+    text_width = measure_text(label, font_size)
+    text_x = x + max(0, (width - text_width) // 2)
+    text_y = y + max(0, (height - font_size) // 2) - 1
+    draw_text(label, text_x, text_y, font_size, Color(230, 230, 230, 255))
 
 
 async def main() -> None:
@@ -291,6 +313,14 @@ async def main() -> None:
 
             dt = get_frame_time()
             view_mode_before_input = sim.view_mode
+
+            # Browsers suspend hidden tabs. Advance the deterministic tick
+            # pipeline once on resume instead of burning CPU in the background.
+            inactive_seconds = get_inactive_time() if _WEB else 0.0
+            if inactive_seconds > 0.0 and not sim.paused and sim.view_mode == "reactor":
+                if sim.catch_up(inactive_seconds) > 0:
+                    save_game(sim, save_path)
+                    last_save_time = get_time()
 
             # Check for pending file import (queued by JS file input)
             if _WEB:
@@ -617,6 +647,7 @@ async def main() -> None:
                     bar_h = max(2, cell_sz // 10)
                     bar_margin = 2
                     bar_w = cell_sz - bar_margin * 2
+                    heat_bar_pulse = abs(math.sin(get_time() * 6.0))
 
                     for gx, gy, _gz, component in sim.grid.iter_cells():
                         if component is None:
@@ -655,16 +686,13 @@ async def main() -> None:
                             ui.draw_warning_badge(badge_x, badge_y, badge_size)
 
                         bars_drawn = 0
-                        stats = component.stats
-
                         eff_hc = sim.get_effective_heat_capacity(component)
                         if eff_hc > 0.0 and not component.depleted:
                             raw_fill = component.heat / eff_hc
                             fill = min(1.0, max(0.0, raw_fill))
                             bar_y = py + cell_sz - bar_margin - bar_h
                             if raw_fill > 0.8:
-                                pulse = abs(math.sin(get_time() * 6.0))
-                                bg_r = int(40 + 80 * pulse)
+                                bg_r = int(40 + 80 * heat_bar_pulse)
                                 draw_rectangle(
                                     int(px + bar_margin), int(bar_y),
                                     int(bar_w), int(bar_h),
@@ -678,10 +706,9 @@ async def main() -> None:
                                 )
                             if fill > 0.001:
                                 if raw_fill > 0.8:
-                                    pulse = abs(math.sin(get_time() * 6.0))
                                     r = 255
-                                    g = int(120 + 135 * pulse)
-                                    b = int(60 + 195 * pulse)
+                                    g = int(120 + 135 * heat_bar_pulse)
+                                    b = int(60 + 195 * heat_bar_pulse)
                                 else:
                                     r = int(180 + 75 * fill)
                                     g = int(60 * (1.0 - fill))
@@ -769,16 +796,6 @@ async def main() -> None:
             if sim.view_mode == "reactor" and sim.grid is not None:
                 sim.grid.draw_scrollbars()
 
-            def draw_button_label(label: str, x: int, y: int, w: int, h: int, base_size: int, min_size: int = 8) -> None:
-                fs = base_size
-                max_w = max(8, w - 10)
-                while fs > min_size and measure_text(label, fs) > max_w:
-                    fs -= 1
-                tw = measure_text(label, fs)
-                tx = x + max(0, (w - tw) // 2)
-                ty = y + max(0, (h - fs) // 2) - 1
-                draw_text(label, tx, ty, fs, Color(230, 230, 230, 255))
-
             # Top-left upgrade tabs
             upg_tex = btn_med_pressed if sim.view_mode == "upgrades" else (btn_med_hover if hover_upgrades else btn_med)
             draw_texture_pro(
@@ -789,7 +806,7 @@ async def main() -> None:
                 0.0,
                 Color(255, 255, 255, 255),
             )
-            draw_button_label("Upgrades", layout.main_upgrades_x, layout.main_upgrades_y, upg_tex.width, upg_tex.height, 13, 10)
+            _draw_button_label("Upgrades", layout.main_upgrades_x, layout.main_upgrades_y, upg_tex.width, upg_tex.height, 13, 10)
             prs_tex = btn_med_pressed if sim.view_mode == "prestige" else (btn_med_hover if hover_prestige else btn_med)
             draw_texture_pro(
                 prs_tex,
@@ -799,7 +816,7 @@ async def main() -> None:
                 0.0,
                 Color(255, 255, 255, 255),
             )
-            draw_button_label("Prestige", layout.prestige_upgrades_x, layout.prestige_upgrades_y, prs_tex.width, prs_tex.height, 13, 10)
+            _draw_button_label("Prestige", layout.prestige_upgrades_x, layout.prestige_upgrades_y, prs_tex.width, prs_tex.height, 13, 10)
 
             # Bottom buttons (Options / Statistics / Help)
             opt_tex = btn_small_pressed if sim.view_mode == "options" else (btn_small_hover if hover_options else btn_small)
@@ -811,7 +828,7 @@ async def main() -> None:
                 0.0,
                 Color(255, 255, 255, 255),
             )
-            draw_button_label("Options", layout.options_x, layout.options_y, opt_tex.width, opt_tex.height, 10, 8)
+            _draw_button_label("Options", layout.options_x, layout.options_y, opt_tex.width, opt_tex.height, 10, 8)
             stats_tex = btn_small_pressed if sim.view_mode == "statistics" else (btn_small_hover if hover_stats else btn_small)
             draw_texture_pro(
                 stats_tex,
@@ -821,7 +838,7 @@ async def main() -> None:
                 0.0,
                 Color(255, 255, 255, 255),
             )
-            draw_button_label("Statistics", layout.stats_x_btn, layout.stats_y_btn, stats_tex.width, stats_tex.height, 10, 8)
+            _draw_button_label("Statistics", layout.stats_x_btn, layout.stats_y_btn, stats_tex.width, stats_tex.height, 10, 8)
             help_tex = btn_small_pressed if sim.view_mode == "help" else (btn_small_hover if hover_help else btn_small)
             draw_texture_pro(
                 help_tex,
@@ -831,7 +848,7 @@ async def main() -> None:
                 0.0,
                 Color(255, 255, 255, 255),
             )
-            draw_button_label("Help", layout.help_x, layout.help_y, help_tex.width, help_tex.height, 10, 8)
+            _draw_button_label("Help", layout.help_x, layout.help_y, help_tex.width, help_tex.height, 10, 8)
 
             # Back button (visible only when in upgrade/prestige view)
             if sim.view_mode != "reactor":
@@ -962,7 +979,7 @@ async def main() -> None:
 
             # Yield to browser event loop
             if _WEB:
-                await _wait_frame()  # vsync via requestAnimationFrame Promise
+                await _wait_frame(bool(sim.explosions))
             else:
                 await asyncio.sleep(0)
     finally:

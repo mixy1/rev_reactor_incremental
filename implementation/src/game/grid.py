@@ -48,6 +48,9 @@ class Grid:
     # Scrollbar drag state
     _scrollbar_dragging_h: bool = field(init=False, repr=False, default=False)
     _scrollbar_dragging_v: bool = field(init=False, repr=False, default=False)
+    _neighbor_cache: list[tuple[tuple[int, int, int], ...]] = field(
+        init=False, repr=False, default_factory=list
+    )
 
     def __post_init__(self) -> None:
         if self.cell_size is None:
@@ -59,6 +62,25 @@ class Grid:
         self.viewport_w = self.base_width * self.cell_size
         self.viewport_h = self.base_height * self.cell_size
         self.cells = [None] * (self.width * self.height * self.layers)
+        self._rebuild_neighbor_cache()
+
+    def _rebuild_neighbor_cache(self) -> None:
+        """Precompute cardinal topology; it changes only when the grid resizes."""
+        cache: list[tuple[tuple[int, int, int], ...]] = []
+        for z in range(self.layers):
+            for y in range(self.height):
+                for x in range(self.width):
+                    coords: list[tuple[int, int, int]] = []
+                    if x > 0:
+                        coords.append((x - 1, y, z))
+                    if x < self.width - 1:
+                        coords.append((x + 1, y, z))
+                    if y > 0:
+                        coords.append((x, y - 1, z))
+                    if y < self.height - 1:
+                        coords.append((x, y + 1, z))
+                    cache.append(tuple(coords))
+        self._neighbor_cache = cache
 
     def index(self, x: int, y: int, z: int = 0) -> int:
         if not self.in_bounds(x, y, z):
@@ -71,7 +93,7 @@ class Grid:
     def get(self, x: int, y: int, z: int = 0) -> Optional[object]:
         if not self.in_bounds(x, y, z):
             return None
-        return self.cells[self.index(x, y, z)]
+        return self.cells[(z * self.height + y) * self.width + x]
 
     def set(self, x: int, y: int, z: int, value: Optional[object]) -> None:
         self.cells[self.index(x, y, z)] = value
@@ -83,7 +105,8 @@ class Grid:
         for z in range(self.layers):
             for y in range(self.height):
                 for x in range(self.width):
-                    yield x, y, z, self.get(x, y, z)
+                    idx = (z * self.height + y) * self.width + x
+                    yield x, y, z, self.cells[idx]
 
     def neighbor_offsets(self, x: int, y: int) -> list[int]:
         offsets: list[int] = []
@@ -97,17 +120,11 @@ class Grid:
             offsets.append(self.width)
         return offsets
 
-    def neighbors(self, x: int, y: int, z: int = 0) -> list[tuple[int, int, int]]:
-        coords: list[tuple[int, int, int]] = []
-        if x > 0:
-            coords.append((x - 1, y, z))
-        if x < self.width - 1:
-            coords.append((x + 1, y, z))
-        if y > 0:
-            coords.append((x, y - 1, z))
-        if y < self.height - 1:
-            coords.append((x, y + 1, z))
-        return coords
+    def neighbors(self, x: int, y: int, z: int = 0) -> tuple[tuple[int, int, int], ...]:
+        if not self.in_bounds(x, y, z):
+            return ()
+        idx = (z * self.height + y) * self.width + x
+        return self._neighbor_cache[idx]
 
     def manhattan_neighbors(self, x: int, y: int, z: int, radius: int) -> list[tuple[int, int, int]]:
         """RE: fn 10440 — cells within Manhattan distance ≤ radius (diamond shape), excluding self."""
@@ -148,6 +165,7 @@ class Grid:
                     new_idx = (z * new_height + y) * new_width + x
                     self.cells[new_idx] = old_cells[old_idx]
 
+        self._rebuild_neighbor_cache()
         self.clamp_scroll()
 
     def clamp_scroll(self) -> None:

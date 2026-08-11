@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,7 @@ _ORIG_UPGRADE_COUNT = 51
 _ORIG_BASE_GRID_WIDTH = 19
 _ORIG_BASE_GRID_HEIGHT = 16
 _ORIG_GRID_DEPTH = 1
+_SAVED_AT_KEY = "saved_at_unix_ms"
 
 # Original game component type index → our catalog name (sprite-based).
 # RE: component_types.json field_index ordering.
@@ -574,6 +576,7 @@ def _build_save_dict(sim: Simulation) -> dict:
 
     return {
         "version": 1,
+        _SAVED_AT_KEY: int(time.time() * 1000.0),
         "store": {
             "money": sim.store.money,
             "total_money": sim.store.total_money,
@@ -625,6 +628,7 @@ def _restore_from_dict(sim: Simulation, data: dict) -> bool:
         for i, level in enumerate(upgrade_levels):
             if i < len(sim.upgrade_manager.upgrades):
                 sim.upgrade_manager.upgrades[i].level = int(level)
+        sim.upgrade_manager.invalidate_cache()
 
         # 2b. Resize grid for Subspace Expansion (upgrade 50) before placing components
         sim.resize_grid_for_subspace()
@@ -675,6 +679,8 @@ def _restore_from_dict(sim: Simulation, data: dict) -> bool:
 
         # 5. Mark pulses dirty and recompute capacities
         sim._pulses_dirty = True
+        sim._preview_dirty = True
+        sim._multipliers_dirty = True
         sim.recompute_max_capacities()
 
         # 6. Sync store with reactor state
@@ -686,6 +692,24 @@ def _restore_from_dict(sim: Simulation, data: dict) -> bool:
     except (KeyError, TypeError, ValueError) as e:
         print(f"[save] Error restoring save data: {e}")
         return False
+
+
+def _restore_with_catch_up(sim: Simulation, data: dict, now_ms: int | None = None) -> bool:
+    """Restore a save and apply bounded wall-clock progress when appropriate."""
+    if not _restore_from_dict(sim, data):
+        return False
+    if sim.paused:
+        return True
+    try:
+        saved_at_ms = int(data.get(_SAVED_AT_KEY, 0))
+    except (TypeError, ValueError):
+        saved_at_ms = 0
+    if saved_at_ms <= 0:
+        return True
+    current_ms = int(time.time() * 1000.0) if now_ms is None else int(now_ms)
+    elapsed = max(0.0, (current_ms - saved_at_ms) / 1000.0)
+    sim.catch_up(elapsed)
+    return True
 
 
 def _try_import_data(encoded: str) -> dict | None:
@@ -743,7 +767,7 @@ def _handle_file_import(encoded: str) -> bool:
         print("[save] Could not parse import file (not a valid save)")
         return False
 
-    return _restore_from_dict(sim, data)
+    return _restore_with_catch_up(sim, data)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -809,7 +833,7 @@ if _WEB:
             except json.JSONDecodeError as e:
                 print(f"[save] Error parsing bridged save data: {e}")
                 return False
-            return _restore_from_dict(sim, data)
+            return _restore_with_catch_up(sim, data)
 
         try:
             from js import window  # type: ignore
@@ -826,7 +850,7 @@ if _WEB:
         except json.JSONDecodeError as e:
             print(f"[save] Error parsing save data: {e}")
             return False
-        return _restore_from_dict(sim, data)
+        return _restore_with_catch_up(sim, data)
 
     def _download_text(filename: str, text: str) -> None:
         from js import document, Blob, URL  # type: ignore
@@ -904,7 +928,7 @@ else:
         except (OSError, json.JSONDecodeError) as e:
             print(f"[save] Error loading save file: {e}")
             return False
-        return _restore_from_dict(sim, data)
+        return _restore_with_catch_up(sim, data)
 
     def export_save_old(sim: Simulation, path: Path) -> None:
         """Export bounded original Reactor Idle-compatible encrypted save text."""
@@ -947,10 +971,10 @@ else:
 
         data = _try_import_data(encoded)
         if data is None:
-            print(f"[save] Could not parse import file (not a valid save)")
+            print("[save] Could not parse import file (not a valid save)")
             return False
 
-        return _restore_from_dict(sim, data)
+        return _restore_with_catch_up(sim, data)
 
     def _open_file_dialog() -> Path | None:
         """Open a native file dialog to select a .txt file. Returns Path or None."""

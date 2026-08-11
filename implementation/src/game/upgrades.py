@@ -107,6 +107,13 @@ class UpgradeManager:
 
     def __init__(self) -> None:
         self.upgrades: List[UpgradeType] = []
+        self._bonus_cache: dict[tuple[int, int], float] = {}
+        self.revision: int = 0
+
+    def invalidate_cache(self) -> None:
+        """Invalidate derived bonuses after any upgrade-level change."""
+        self._bonus_cache.clear()
+        self.revision += 1
 
     def load(self, path: Optional[Path] = None) -> None:
         if path is None:
@@ -140,6 +147,7 @@ class UpgradeManager:
                 category=entry.get("category", ""),
                 level=0,
             ))
+        self.invalidate_cache()
 
     def get_upgrade_stat_bonus(self, component_type: int, stat_category: int) -> float:
         """RE: unnamed_function_10371 — compute cumulative bonus for a stat.
@@ -147,6 +155,11 @@ class UpgradeManager:
         Returns multiplicative_product * (additive_sum + 1.0).
         With no upgrades purchased, returns 1.0.
         """
+        key = (int(component_type), int(stat_category))
+        cached = self._bonus_cache.get(key)
+        if cached is not None:
+            return cached
+
         additive_sum = 0.0
         multiplicative_product = 1.0
         for upgrade in self.upgrades:
@@ -156,7 +169,9 @@ class UpgradeManager:
                 if bonus.component_type == component_type and bonus.stat_category == stat_category:
                     additive_sum += bonus.additive * upgrade.level
                     multiplicative_product *= bonus.multiplicative ** upgrade.level
-        return multiplicative_product * (additive_sum + 1.0)
+        result = multiplicative_product * (additive_sum + 1.0)
+        self._bonus_cache[key] = result
+        return result
 
     def get_cost(self, upgrade_idx: int, level: Optional[int] = None) -> float:
         """Compute cost for purchasing the next level of an upgrade.
@@ -204,6 +219,7 @@ class UpgradeManager:
         else:
             money -= cost
         u.level += 1
+        self.invalidate_cache()
         return money, exotic_particles
 
     def get_upgrade_discount(self) -> float:
@@ -249,6 +265,10 @@ class UpgradeManager:
         Binary uses unnamed_function_10447 which sums ComponentType.Tier
         (offset 0x10) for all components matching a TypeOfComponent (0x14).
         """
+        if (not sim._multipliers_dirty
+                and sim._multiplier_upgrade_revision == self.revision):
+            return
+
         # RE: unnamed_function_10447(param1, 0xd, 0) — sums Tier for TypeOfComponent=0xd
         # Binary checks TypeOfComponent=13 but description says "Each capacitor".
         # The Tier field weights higher-tier components more (tier 1=1, tier 5=5).
@@ -286,3 +306,5 @@ class UpgradeManager:
 
         # Manual sell multiplier
         sim.manual_sell_mult = self.get_upgrade_stat_bonus(1, StatCategory.MANUAL_SELL)
+        sim._multipliers_dirty = False
+        sim._multiplier_upgrade_revision = self.revision

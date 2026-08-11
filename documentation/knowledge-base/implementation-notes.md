@@ -50,9 +50,18 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 ## Web crash note (2026-02-12)
 
 - Added iframe watchdog architecture: `web/index.html` is now a host page and `web/game.html` runs the game runtime.
-- Child frame emits `postMessage` heartbeat every 500ms; host reloads iframe on stalled heartbeat (6s timeout, 20s startup grace).
+- Child frame emits `postMessage` heartbeats and the host can reload a genuinely stalled iframe.
 - Save persistence remains in web localStorage (`rev_reactor_save`), so iframe restarts do not clear saved progress.
 - Updated iframe sandbox mode to `sandbox="allow-scripts"` and moved save/load/theme state sync to a parent↔child `postMessage` bridge (`RevReactorHostBridge`) so web save persistence still works without `allow-same-origin`.
+
+## Web lifecycle and efficiency (2026-08-10)
+
+- Saves now include a wall-clock timestamp. Loading or reopening applies deterministic catch-up for elapsed time, capped at four hours and 10,000 simulation ticks so a stale save cannot lock up Pyodide. Legacy saves begin timestamp-based catch-up after their next save.
+- Hidden tabs stop both simulation and rendering work. On visibility return, or after a long browser stall, elapsed time is consumed once by catch-up; paused games and the reactor-view panel do not advance.
+- The iframe watchdog now uses a 12-second timeout, a 60-second startup/resume grace period, and a request/response probe before restarting the runtime. Heartbeats run every two seconds and immediately on visibility return, avoiding false reloads after ordinary tab switches.
+- Web rendering is paced at 30 FPS while active or animated, 10 FPS while idle, and zero frames while hidden. Repeated sprite tinting and per-frame command strings are cached/deduplicated.
+- Simulation hot paths now cache upgrade bonuses, component multipliers, grid topology, clean preview values, help wrapping, and store-page results. A like-for-like stable 304-component native benchmark improved from roughly 4,936 to 21,232 ticks/second (4.3×).
+- Regression coverage includes five Python lifecycle/cache tests and two Node tests for hidden-tab timing and renderer wake-up behavior.
 
 ## Save compatibility note (2026-02-13)
 

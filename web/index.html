@@ -148,14 +148,17 @@
             const SAVE_KEY = 'rev_reactor_save';
 
             const CHECK_EVERY_MS = 1000;
-            const HEARTBEAT_TIMEOUT_MS = 6000;
-            const FIRST_BEAT_GRACE_MS = 20000;
+            const HEARTBEAT_TIMEOUT_MS = 12000;
+            const FIRST_BEAT_GRACE_MS = 60000;
+            const RESUME_GRACE_MS = 60000;
 
             let currentTheme = localStorage.getItem('sprite-theme') === 'decayed' ? 'decayed' : 'default';
             let lastBeat = Date.now();
             let frameLoadAt = Date.now();
             let hasBeat = false;
             let restartCount = 0;
+            let watchdogGraceUntil = frameLoadAt + FIRST_BEAT_GRACE_MS;
+            let heartbeatProbeAt = 0;
 
             function setStatus(message) {
                 if (!statusEl) return;
@@ -221,6 +224,14 @@
                 );
             }
 
+            function requestHeartbeat() {
+                if (!frame.contentWindow) return;
+                frame.contentWindow.postMessage(
+                    { type: 'rev-reactor-heartbeat-request' },
+                    '*'
+                );
+            }
+
             function setTheme(theme) {
                 currentTheme = theme === 'decayed' ? 'decayed' : 'default';
                 localStorage.setItem('sprite-theme', currentTheme);
@@ -238,6 +249,8 @@
                 hasBeat = false;
                 frameLoadAt = Date.now();
                 lastBeat = frameLoadAt;
+                watchdogGraceUntil = frameLoadAt + FIRST_BEAT_GRACE_MS;
+                heartbeatProbeAt = 0;
                 setStatus(`Game restarted (${reason}). Count: ${restartCount}`);
             }
 
@@ -248,6 +261,7 @@
                 if (data.type === 'rev-reactor-beat') {
                     lastBeat = Date.now();
                     hasBeat = true;
+                    heartbeatProbeAt = 0;
                     if (statusEl && statusEl.textContent) {
                         setStatus('');
                     }
@@ -277,8 +291,21 @@
                 frameLoadAt = Date.now();
                 lastBeat = frameLoadAt;
                 hasBeat = false;
+                watchdogGraceUntil = frameLoadAt + FIRST_BEAT_GRACE_MS;
+                heartbeatProbeAt = 0;
                 postHostStateToGame();
                 postThemeToGame();
+            });
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) return;
+                // Hidden-page timers are throttled. Give the healthy iframe a
+                // chance to answer before treating a stale heartbeat as a hang.
+                const now = Date.now();
+                lastBeat = now;
+                watchdogGraceUntil = now + RESUME_GRACE_MS;
+                heartbeatProbeAt = 0;
+                requestHeartbeat();
             });
 
             if (themeBtn) {
@@ -291,6 +318,7 @@
                 if (document.hidden) return;
 
                 const now = Date.now();
+                if (now < watchdogGraceUntil) return;
                 if (!hasBeat) {
                     if (now - frameLoadAt > FIRST_BEAT_GRACE_MS) {
                         restartFrame('no heartbeat during startup');
@@ -299,7 +327,14 @@
                 }
 
                 if (now - lastBeat > HEARTBEAT_TIMEOUT_MS) {
-                    restartFrame('heartbeat timeout');
+                    if (heartbeatProbeAt === 0) {
+                        heartbeatProbeAt = now;
+                        requestHeartbeat();
+                        return;
+                    }
+                    if (now - heartbeatProbeAt > 5000) {
+                        restartFrame('heartbeat timeout');
+                    }
                 }
             }, CHECK_EVERY_MS);
 
