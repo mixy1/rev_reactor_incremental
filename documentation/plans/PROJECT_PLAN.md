@@ -140,7 +140,7 @@ Steps:
 - [x] Added dual export paths in Python options UI: `Export Old` (legacy-bounded encrypted format) and `Export New` (unbounded base64-JSON).
 - [x] Added timestamped web resume/reopen catch-up and hardened the iframe watchdog against false reloads after tab switches.
 - [x] Reduced web CPU usage with visibility-aware/adaptive frame pacing plus simulation, UI, and rendering caches.
-- [x] Hardened Safari persistence with five-second/lifecycle autosaves and retry-safe iframe↔host save synchronization.
+- [x] Hardened Safari persistence with five-second/lifecycle autosaves, acknowledged iframe writes, redundant snapshots, and single-writer multi-tab ownership.
 - [ ] Implement upgrade system (stat bonuses, prestige).
 - [ ] Implement save/load (import/export).
 - [ ] Wire remaining UI elements (heat/power bars, info banner, stats panel).

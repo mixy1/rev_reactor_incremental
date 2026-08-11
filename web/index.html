@@ -42,6 +42,7 @@
                 referrerpolicy="same-origin"
             ></iframe>
             <p id="watchdog-status" class="game-watchdog-status" aria-live="polite"></p>
+            <p id="save-status" class="game-save-status" aria-live="polite">Save: waiting for game…</p>
             <p class="game-attribution">
                 Original game created by
                 <a href="https://www.kongregate.com/en/games/cael/reactor-incremental" target="_blank" rel="noopener">cael</a>.
@@ -145,12 +146,26 @@
             const frame = document.getElementById('game-frame');
             const themeBtn = document.getElementById('theme-toggle');
             const statusEl = document.getElementById('watchdog-status');
+            const saveStatusEl = document.getElementById('save-status');
             const SAVE_KEY = 'rev_reactor_save';
+            const SAVE_BACKUP_KEY = 'rev_reactor_save_backup';
+            const SAVE_WRITER_KEY = 'rev_reactor_save_writer';
 
             const CHECK_EVERY_MS = 1000;
             const HEARTBEAT_TIMEOUT_MS = 12000;
             const FIRST_BEAT_GRACE_MS = 60000;
             const RESUME_GRACE_MS = 60000;
+
+            function createBridgeToken() {
+                if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+                    const values = new Uint32Array(4);
+                    crypto.getRandomValues(values);
+                    return Array.from(values, value => value.toString(36)).join('-');
+                }
+                return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+            }
+
+            const BRIDGE_TOKEN = createBridgeToken();
 
             let inMemorySaveText = null;
 
@@ -173,6 +188,22 @@
                 }
             }
 
+            function claimSaveWriter() {
+                return writeLocalStorage(SAVE_WRITER_KEY, BRIDGE_TOKEN);
+            }
+
+            function canWriteSave() {
+                const owner = readLocalStorage(SAVE_WRITER_KEY);
+                if (owner === BRIDGE_TOKEN) return true;
+                if (owner === null) {
+                    // Either no owner exists or storage is unavailable. Claim
+                    // when possible; otherwise retain the in-memory fallback.
+                    claimSaveWriter();
+                    return true;
+                }
+                return false;
+            }
+
             let currentTheme = readLocalStorage('sprite-theme') === 'decayed' ? 'decayed' : 'default';
             let lastBeat = Date.now();
             let frameLoadAt = Date.now();
@@ -184,6 +215,12 @@
             function setStatus(message) {
                 if (!statusEl) return;
                 statusEl.textContent = message;
+            }
+
+            function setSaveStatus(message, isError = false) {
+                if (!saveStatusEl) return;
+                saveStatusEl.textContent = message;
+                saveStatusEl.classList.toggle('save-error', isError);
             }
 
             function applyThemeButton() {
@@ -201,18 +238,55 @@
             }
 
             function readSavedGame() {
-                const persisted = readLocalStorage(SAVE_KEY);
-                if (typeof persisted === 'string') {
-                    inMemorySaveText = persisted;
-                    return persisted;
+                const candidates = [
+                    readLocalStorage(SAVE_KEY),
+                    readLocalStorage(SAVE_BACKUP_KEY),
+                    inMemorySaveText,
+                ];
+                let newest = null;
+                let newestTimestamp = -1;
+                let newestTicks = -1;
+                for (const text of candidates) {
+                    if (typeof text !== 'string') continue;
+                    try {
+                        const parsed = JSON.parse(text);
+                        const timestamp = Number(parsed.saved_at_unix_ms) || 0;
+                        const ticks = Number(parsed.total_ticks) || 0;
+                        if (timestamp > newestTimestamp
+                                || (timestamp === newestTimestamp && ticks > newestTicks)) {
+                            newest = text;
+                            newestTimestamp = timestamp;
+                            newestTicks = ticks;
+                        }
+                    } catch (_err) {
+                        // Ignore corrupt candidates and use another snapshot.
+                    }
                 }
-                return inMemorySaveText;
+                if (newest !== null) {
+                    inMemorySaveText = newest;
+                }
+                return newest;
             }
 
             function writeSavedGame(saveText) {
-                if (typeof saveText !== 'string') return;
+                if (typeof saveText !== 'string') {
+                    return { accepted: false, durable: false };
+                }
+                try {
+                    JSON.parse(saveText);
+                } catch (_err) {
+                    return { accepted: false, durable: false };
+                }
+                if (!canWriteSave()) {
+                    return { accepted: false, durable: false };
+                }
                 inMemorySaveText = saveText;
-                writeLocalStorage(SAVE_KEY, saveText);
+                const backupWritten = writeLocalStorage(SAVE_BACKUP_KEY, saveText);
+                const primaryWritten = writeLocalStorage(SAVE_KEY, saveText);
+                return {
+                    accepted: true,
+                    durable: backupWritten || primaryWritten,
+                };
             }
 
             function triggerDownload(filename, text) {
@@ -236,6 +310,7 @@
                 frame.contentWindow.postMessage(
                     {
                         type: 'rev-reactor-host-state',
+                        bridgeToken: BRIDGE_TOKEN,
                         theme: currentTheme,
                         saveText: readSavedGame(),
                     },
@@ -274,9 +349,20 @@
             }
 
             window.addEventListener('message', (ev) => {
-                if (ev.source !== frame.contentWindow) return;
                 const data = ev.data;
                 if (!data || typeof data !== 'object') return;
+
+                // Initial requests do not have a token yet. Always reply to
+                // the known game iframe rather than exposing state to sender.
+                if (data.type === 'rev-reactor-host-state-request') {
+                    postHostStateToGame();
+                    return;
+                }
+
+                // Safari can wrap sandboxed WindowProxy objects differently;
+                // authenticate all post-handshake messages with a random token
+                // instead of relying solely on strict proxy identity.
+                if (data.bridgeToken !== BRIDGE_TOKEN) return;
                 if (data.type === 'rev-reactor-beat') {
                     lastBeat = Date.now();
                     hasBeat = true;
@@ -287,13 +373,30 @@
                     return;
                 }
 
-                if (data.type === 'rev-reactor-host-state-request') {
-                    postHostStateToGame();
-                    return;
-                }
-
                 if (data.type === 'rev-reactor-save-write') {
-                    writeSavedGame(data.saveText);
+                    const result = writeSavedGame(data.saveText);
+                    const savedAt = Date.now();
+                    if (!result.accepted) {
+                        setSaveStatus('Save handled by another active game tab.');
+                    } else if (result.durable) {
+                        setSaveStatus(`Saved locally at ${new Date(savedAt).toLocaleTimeString()}`);
+                    } else {
+                        setSaveStatus(
+                            'Save is only in memory — Safari is blocking persistent site storage.',
+                            true
+                        );
+                    }
+                    frame.contentWindow.postMessage(
+                        {
+                            type: 'rev-reactor-save-ack',
+                            bridgeToken: BRIDGE_TOKEN,
+                            writeId: data.writeId,
+                            accepted: result.accepted,
+                            durable: result.durable,
+                            savedAt,
+                        },
+                        '*'
+                    );
                     return;
                 }
 
@@ -318,6 +421,7 @@
 
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden) return;
+                claimSaveWriter();
                 // Hidden-page timers are throttled. Give the healthy iframe a
                 // chance to answer before treating a stale heartbeat as a hang.
                 const now = Date.now();
@@ -326,6 +430,7 @@
                 heartbeatProbeAt = 0;
                 requestHeartbeat();
             });
+            window.addEventListener('focus', claimSaveWriter);
 
             if (themeBtn) {
                 themeBtn.addEventListener('click', () => {
@@ -358,6 +463,7 @@
             }, CHECK_EVERY_MS);
 
             applyThemeButton();
+            if (!document.hidden) claimSaveWriter();
             postThemeToGame();
         })();
     </script>

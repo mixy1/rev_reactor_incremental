@@ -68,8 +68,11 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 - Web autosaves now run every five seconds and persist the loaded/caught-up state immediately at startup.
 - `visibilitychange` and `pagehide` request a fresh Python serialization. The renderer wakes exactly one pending frame for that save, then returns to zero background rendering/simulation work.
 - The sandboxed game frame retries its host-state request every 250 ms until the host responds. It no longer treats a short timeout as an empty save, preventing a fast cached iframe from overwriting existing state before the host message listener is ready.
+- Iframe save writes use a random bridge token, receive explicit host acknowledgements, and retry once per second until acknowledged. This removes the previous fire-and-forget loss window during Safari termination.
+- The host writes both primary and backup snapshots and loads the newest valid timestamp/tick candidate. The newly visible or focused tab owns writes, preventing an older frozen tab from overwriting the active tab during shutdown.
+- A save-status line below the game reports successful durable writes, multi-tab ownership, or blocked Safari storage.
 - Host storage access is guarded for Safari privacy/storage exceptions. The latest serialized state remains available in host memory for iframe watchdog restarts even if durable browser storage is unavailable.
-- Repository-local JavaScript coverage now includes five tests for catch-up timing, hidden rendering, lifecycle-save wake-up, host-state retries, and blocked-storage behavior.
+- Repository-local JavaScript coverage now includes seven tests for catch-up timing, hidden rendering, lifecycle-save wake-up, acknowledged host retries, blocked storage, redundant snapshot selection, and multi-tab ownership.
 
 ## Save compatibility note (2026-02-13)
 

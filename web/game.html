@@ -46,9 +46,13 @@
                 ready: false,
                 saveText: null,
                 theme: 'default',
+                bridgeToken: null,
+                lastSaveAck: null,
             };
             let readyResolvers = [];
             let hostStateRetry = null;
+            let pendingSaveWrite = null;
+            let saveWriteSequence = 0;
 
             function normalizeTheme(theme) {
                 return theme === 'decayed' ? 'decayed' : 'default';
@@ -86,6 +90,20 @@
                 }
             }
 
+            function postPendingSave() {
+                if (!pendingSaveWrite || !state.bridgeToken) return;
+                if (!window.parent || window.parent === window) return;
+                window.parent.postMessage(
+                    {
+                        type: 'rev-reactor-save-write',
+                        bridgeToken: state.bridgeToken,
+                        writeId: pendingSaveWrite.writeId,
+                        saveText: pendingSaveWrite.saveText,
+                    },
+                    '*'
+                );
+            }
+
             function downloadTextLocal(filename, text) {
                 const safeName = typeof filename === 'string' && filename.trim()
                     ? filename.trim()
@@ -120,17 +138,34 @@
                 setSaveText(text) {
                     state.saveText = String(text);
                     if (window.parent && window.parent !== window) {
-                        window.parent.postMessage(
-                            { type: 'rev-reactor-save-write', saveText: state.saveText },
-                            '*'
-                        );
+                        saveWriteSequence += 1;
+                        pendingSaveWrite = {
+                            writeId: `${Date.now().toString(36)}-${saveWriteSequence.toString(36)}`,
+                            saveText: state.saveText,
+                        };
+                        postPendingSave();
                         return;
                     }
                     try {
                         localStorage.setItem(SAVE_KEY, state.saveText);
+                        state.lastSaveAck = {
+                            accepted: true,
+                            durable: true,
+                            savedAt: Date.now(),
+                        };
                     } catch (_err) {
-                        // Ignore unavailable localStorage in restricted contexts.
+                        state.lastSaveAck = {
+                            accepted: true,
+                            durable: false,
+                            savedAt: Date.now(),
+                        };
                     }
+                },
+                getSaveStatus() {
+                    return {
+                        pending: pendingSaveWrite !== null,
+                        lastAck: state.lastSaveAck,
+                    };
                 },
                 getTheme() {
                     return state.theme;
@@ -138,7 +173,12 @@
                 downloadText(filename, text) {
                     if (window.parent && window.parent !== window) {
                         window.parent.postMessage(
-                            { type: 'rev-reactor-download', filename, text },
+                            {
+                                type: 'rev-reactor-download',
+                                bridgeToken: state.bridgeToken,
+                                filename,
+                                text,
+                            },
                             '*'
                         );
                         return true;
@@ -155,7 +195,22 @@
                 if (data.type === 'rev-reactor-host-state') {
                     state.theme = normalizeTheme(data.theme);
                     state.saveText = typeof data.saveText === 'string' ? data.saveText : null;
+                    state.bridgeToken = typeof data.bridgeToken === 'string'
+                        ? data.bridgeToken
+                        : null;
                     markReady();
+                    return;
+                }
+
+                if (data.type === 'rev-reactor-save-ack') {
+                    if (data.bridgeToken !== state.bridgeToken) return;
+                    if (!pendingSaveWrite || data.writeId !== pendingSaveWrite.writeId) return;
+                    state.lastSaveAck = {
+                        accepted: data.accepted !== false,
+                        durable: data.durable === true,
+                        savedAt: Number(data.savedAt) || Date.now(),
+                    };
+                    pendingSaveWrite = null;
                     return;
                 }
 
@@ -171,7 +226,14 @@
 
             function beat() {
                 if (window.parent && window.parent !== window) {
-                    window.parent.postMessage({ type: 'rev-reactor-beat', ts: Date.now() }, '*');
+                    window.parent.postMessage(
+                        {
+                            type: 'rev-reactor-beat',
+                            bridgeToken: state.bridgeToken,
+                            ts: Date.now(),
+                        },
+                        '*'
+                    );
                 }
             }
 
@@ -194,6 +256,7 @@
                 if (!document.hidden) beat();
             });
             setInterval(beat, 2000);
+            setInterval(postPendingSave, 1000);
         })();
     </script>
     <script src="renderer.js"></script>

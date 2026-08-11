@@ -226,6 +226,7 @@ test('sandbox bridge retries host-state synchronization until save state arrives
     window.dispatch('message', {
         data: {
             type: 'rev-reactor-host-state',
+            bridgeToken: 'bridge-token',
             theme: 'decayed',
             saveText: '{"saved":true}',
         },
@@ -237,6 +238,32 @@ test('sandbox bridge retries host-state synchronization until save state arrives
 
     retry.callback();
     assert.equal(countRequests(), 2, 'retry stops after host state arrives');
+
+    window.RevReactorHostBridge.setSaveText('{"saved":"new"}');
+    const saveWrites = () => parentMessages.filter(
+        message => message.type === 'rev-reactor-save-write'
+    );
+    assert.equal(saveWrites().length, 1);
+    assert.equal(saveWrites()[0].bridgeToken, 'bridge-token');
+    assert.equal(window.RevReactorHostBridge.getSaveStatus().pending, true);
+
+    const saveRetry = intervals.find(interval => interval.delay === 1000);
+    saveRetry.callback();
+    assert.equal(saveWrites().length, 2, 'unacknowledged save is retried');
+
+    window.dispatch('message', {
+        data: {
+            type: 'rev-reactor-save-ack',
+            bridgeToken: 'bridge-token',
+            writeId: saveWrites()[0].writeId,
+            durable: true,
+            savedAt: 1234,
+        },
+    });
+    assert.equal(window.RevReactorHostBridge.getSaveStatus().pending, false);
+    assert.equal(window.RevReactorHostBridge.getSaveStatus().lastAck.durable, true);
+    saveRetry.callback();
+    assert.equal(saveWrites().length, 2, 'retry stops after acknowledgement');
 });
 
 test('host bridge survives blocked localStorage and retains the latest save in memory', () => {
@@ -265,10 +292,22 @@ test('host bridge survives blocked localStorage and retains the latest save in m
         URL,
     });
     vm.runInContext(hostBridgeSource, context);
+    window.dispatch('message', {
+        source: frame.contentWindow,
+        data: { type: 'rev-reactor-host-state-request' },
+    });
+
+    const initialState = postedToChild.find(message => message.type === 'rev-reactor-host-state');
+    const bridgeToken = initialState.bridgeToken;
 
     window.dispatch('message', {
         source: frame.contentWindow,
-        data: { type: 'rev-reactor-save-write', saveText: '{"tick":42}' },
+        data: {
+            type: 'rev-reactor-save-write',
+            bridgeToken,
+            writeId: 'write-1',
+            saveText: '{"saved_at_unix_ms":42,"total_ticks":42}',
+        },
     });
     window.dispatch('message', {
         source: frame.contentWindow,
@@ -276,5 +315,126 @@ test('host bridge survives blocked localStorage and retains the latest save in m
     });
 
     const stateMessages = postedToChild.filter(message => message.type === 'rev-reactor-host-state');
-    assert.equal(stateMessages.at(-1).saveText, '{"tick":42}');
+    assert.equal(
+        stateMessages.at(-1).saveText,
+        '{"saved_at_unix_ms":42,"total_ticks":42}'
+    );
+    const ack = postedToChild.find(message => message.type === 'rev-reactor-save-ack');
+    assert.equal(ack.writeId, 'write-1');
+    assert.equal(ack.durable, false);
+});
+
+test('host bridge loads the newest valid redundant snapshot', () => {
+    const document = new FakeEventTarget();
+    const window = new FakeEventTarget();
+    const frame = new FakeEventTarget();
+    const postedToChild = [];
+    const storage = new Map([
+        ['rev_reactor_save', '{"saved_at_unix_ms":100,"total_ticks":10}'],
+        ['rev_reactor_save_backup', '{"saved_at_unix_ms":200,"total_ticks":20}'],
+    ]);
+    frame.dataset = { baseSrc: 'game.html' };
+    frame.contentWindow = {
+        postMessage(message) {
+            postedToChild.push(message);
+        },
+    };
+    document.hidden = false;
+    document.getElementById = (id) => id === 'game-frame' ? frame : null;
+
+    const context = vm.createContext({
+        console,
+        document,
+        window,
+        localStorage: {
+            getItem: key => storage.get(key) ?? null,
+            setItem: (key, value) => storage.set(key, value),
+        },
+        setInterval: () => 1,
+        URL,
+    });
+    vm.runInContext(hostBridgeSource, context);
+    window.dispatch('message', {
+        source: frame.contentWindow,
+        data: { type: 'rev-reactor-host-state-request' },
+    });
+
+    const state = postedToChild.find(message => message.type === 'rev-reactor-host-state');
+    assert.equal(state.saveText, '{"saved_at_unix_ms":200,"total_ticks":20}');
+});
+
+test('newly opened visible tab prevents an older tab from overwriting its save', () => {
+    const storage = new Map();
+
+    function createHostTab() {
+        const document = new FakeEventTarget();
+        const window = new FakeEventTarget();
+        const frame = new FakeEventTarget();
+        const postedToChild = [];
+        frame.dataset = { baseSrc: 'game.html' };
+        frame.contentWindow = {
+            postMessage(message) {
+                postedToChild.push(message);
+            },
+        };
+        document.hidden = false;
+        document.getElementById = (id) => id === 'game-frame' ? frame : null;
+
+        const context = vm.createContext({
+            console,
+            document,
+            window,
+            localStorage: {
+                getItem: key => storage.get(key) ?? null,
+                setItem: (key, value) => storage.set(key, value),
+            },
+            setInterval: () => 1,
+            URL,
+        });
+        vm.runInContext(hostBridgeSource, context);
+        window.dispatch('message', {
+            source: frame.contentWindow,
+            data: { type: 'rev-reactor-host-state-request' },
+        });
+        const token = postedToChild.find(
+            message => message.type === 'rev-reactor-host-state'
+        ).bridgeToken;
+        return { frame, postedToChild, token, window };
+    }
+
+    const oldTab = createHostTab();
+    const newTab = createHostTab(); // Visible startup claims writer ownership.
+
+    oldTab.window.dispatch('message', {
+        source: oldTab.frame.contentWindow,
+        data: {
+            type: 'rev-reactor-save-write',
+            bridgeToken: oldTab.token,
+            writeId: 'old-write',
+            saveText: '{"saved_at_unix_ms":300,"total_ticks":30}',
+        },
+    });
+    const oldAck = oldTab.postedToChild.find(
+        message => message.type === 'rev-reactor-save-ack'
+    );
+    assert.equal(oldAck.accepted, false);
+
+    newTab.window.dispatch('message', {
+        source: newTab.frame.contentWindow,
+        data: {
+            type: 'rev-reactor-save-write',
+            bridgeToken: newTab.token,
+            writeId: 'new-write',
+            saveText: '{"saved_at_unix_ms":400,"total_ticks":40}',
+        },
+    });
+    const newAck = newTab.postedToChild.find(
+        message => message.type === 'rev-reactor-save-ack'
+    );
+    assert.equal(newAck.accepted, true);
+    assert.equal(newAck.durable, true);
+    assert.equal(
+        storage.get('rev_reactor_save'),
+        '{"saved_at_unix_ms":400,"total_ticks":40}'
+    );
 });

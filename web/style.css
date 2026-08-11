@@ -192,6 +192,18 @@ main {
     text-align: center;
 }
 
+.game-save-status {
+    margin-top: 0.25rem;
+    min-height: 1.2em;
+    font-size: 0.75rem;
+    color: var(--muted-fg);
+    text-align: center;
+}
+
+.game-save-status.save-error {
+    color: #ff8f8f;
+}
+
 .game-attribution {
     margin-top: 0.5rem;
     font-size: 0.8125rem;
