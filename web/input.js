@@ -30,6 +30,7 @@ globalThis.Input = (() => {
     let hiddenAt = document.hidden ? lastTime : null;
     let pendingInactiveSeconds = 0;
     let runtimeStarted = false;
+    let lifecycleSaveRequested = false;
 
     function noteActivity() {
         lastActivityTime = performance.now();
@@ -123,12 +124,18 @@ globalThis.Input = (() => {
         mouseDown.clear();
     }
 
+    function requestLifecycleSave() {
+        lifecycleSaveRequested = true;
+        releaseHeldInput();
+    }
+
     window.addEventListener('blur', releaseHeldInput);
     document.addEventListener('visibilitychange', () => {
         const now = performance.now();
         lastTime = now;
         releaseHeldInput();
         if (document.hidden || document.visibilityState !== 'visible') {
+            requestLifecycleSave();
             if (hiddenAt === null) hiddenAt = now;
             return;
         }
@@ -137,6 +144,9 @@ globalThis.Input = (() => {
             hiddenAt = null;
         }
         noteActivity();
+    });
+    window.addEventListener('pagehide', () => {
+        requestLifecycleSave();
     });
 
     // Do not clear held buttons on mouseleave; we need drag actions to
@@ -156,6 +166,7 @@ globalThis.Input = (() => {
         wheelDelta: 0,
         keysPressed: _kpArr, keysDown: _kdArr,
         dt: 0,
+        saveRequested: false,
     };
 
     function _copySetToArr(set, arr) {
@@ -181,6 +192,8 @@ globalThis.Input = (() => {
         _state.mouseY = mouseY;
         _state.wheelDelta = wheelDelta;
         _state.dt = dt;
+        _state.saveRequested = lifecycleSaveRequested;
+        lifecycleSaveRequested = false;
 
         _copySetToArr(mouseDown, _mdArr);
         _copySetToArr(mousePressed, _mpArr);
@@ -237,6 +250,7 @@ globalThis.Input = (() => {
         pollInput,
         setFileImport,
         requestFileDialog,
+        requestLifecycleSave,
         consumeInactiveSeconds,
         wasRecentlyActive,
     };

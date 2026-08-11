@@ -284,36 +284,61 @@ globalThis.Renderer = (() => {
     let _lastFrameAt = 0;
     let _resolvedFrames = 0;
     const _visibilityWaiters = [];
+    let _pendingFrame = null;
 
-    function scheduleFrame(resolve, animationActive) {
+    function finishFrame(ticket, now) {
+        if (ticket.settled) return;
+        ticket.settled = true;
+        if (_pendingFrame === ticket) _pendingFrame = null;
+        _lastFrameAt = now;
+        _resolvedFrames += 1;
+        ticket.resolve(now);
+    }
+
+    function scheduleFrame(ticket, animationActive) {
+        if (ticket.settled) return;
         if (document.hidden || document.visibilityState !== 'visible') {
-            _visibilityWaiters.push(() => scheduleFrame(resolve, animationActive));
+            _visibilityWaiters.push(() => scheduleFrame(ticket, animationActive));
             return;
         }
         requestAnimationFrame((now) => {
+            if (ticket.settled) return;
             if (document.hidden || document.visibilityState !== 'visible') {
-                _visibilityWaiters.push(() => scheduleFrame(resolve, animationActive));
+                _visibilityWaiters.push(() => scheduleFrame(ticket, animationActive));
                 return;
             }
             const inputActive = globalThis.Input && globalThis.Input.wasRecentlyActive();
             const interval = animationActive || inputActive ? ACTIVE_FRAME_MS : IDLE_FRAME_MS;
             const remaining = interval - (now - _lastFrameAt);
             if (remaining > 2) {
-                setTimeout(() => scheduleFrame(resolve, animationActive), remaining);
+                setTimeout(() => scheduleFrame(ticket, animationActive), remaining);
                 return;
             }
-            _lastFrameAt = now;
-            _resolvedFrames += 1;
-            resolve(now);
+            finishFrame(ticket, now);
         });
     }
 
+    function wakeForLifecycleSave() {
+        if (globalThis.Input && globalThis.Input.requestLifecycleSave) {
+            globalThis.Input.requestLifecycleSave();
+        }
+        if (_pendingFrame !== null) {
+            finishFrame(_pendingFrame, performance.now());
+        }
+    }
+
     document.addEventListener('visibilitychange', () => {
-        if (document.hidden || document.visibilityState !== 'visible') return;
+        if (document.hidden || document.visibilityState !== 'visible') {
+            // Wake Python once so it can serialize current state before Safari
+            // suspends or evicts the page. Its next wait remains fully hidden.
+            wakeForLifecycleSave();
+            return;
+        }
         _lastFrameAt = 0;
         const waiters = _visibilityWaiters.splice(0);
         for (const resume of waiters) resume();
     });
+    window.addEventListener('pagehide', wakeForLifecycleSave);
 
     /**
      * Pace visible rendering at 30 fps while interactive/animated and 10 fps
@@ -321,7 +346,11 @@ globalThis.Renderer = (() => {
      * up when visibility returns.
      */
     function waitFrame(animationActive = false) {
-        return new Promise(resolve => scheduleFrame(resolve, Boolean(animationActive)));
+        return new Promise(resolve => {
+            const ticket = { resolve, settled: false };
+            _pendingFrame = ticket;
+            scheduleFrame(ticket, Boolean(animationActive));
+        });
     }
 
     function getRuntimeStats() {

@@ -426,3 +426,7 @@ else:
             return float(_web_input.consumeInactiveSeconds())
         except Exception:
             return 0.0
+
+    def is_save_requested() -> bool:
+        """Return whether the browser requested a lifecycle-safe save this frame."""
+        return bool(_input_state.get('saveRequested', False))

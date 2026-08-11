@@ -48,6 +48,7 @@
                 theme: 'default',
             };
             let readyResolvers = [];
+            let hostStateRetry = null;
 
             function normalizeTheme(theme) {
                 return theme === 'decayed' ? 'decayed' : 'default';
@@ -64,6 +65,10 @@
             function markReady() {
                 if (state.ready) return;
                 state.ready = true;
+                if (hostStateRetry !== null) {
+                    clearInterval(hostStateRetry);
+                    hostStateRetry = null;
+                }
                 resolveReady();
             }
 
@@ -102,9 +107,10 @@
                     if (state.ready) return Promise.resolve(true);
                     return new Promise((resolve) => {
                         readyResolvers.push(resolve);
+                        // A timeout is a prompt to retry, not permission to
+                        // start with an empty save and overwrite durable state.
                         setTimeout(() => {
-                            if (!state.ready) markReady();
-                            resolve(state.ready);
+                            if (!state.ready) requestHostState();
                         }, timeoutMs);
                     });
                 },
@@ -170,6 +176,19 @@
             }
 
             requestHostState();
+            if (window.parent && window.parent !== window && !state.ready) {
+                // The child can load before the host installs its message
+                // listener (notably with Safari's cached-page scheduling).
+                // Retry until the host acknowledges with its persisted state.
+                hostStateRetry = setInterval(() => {
+                    if (state.ready) {
+                        clearInterval(hostStateRetry);
+                        hostStateRetry = null;
+                        return;
+                    }
+                    requestHostState();
+                }, 250);
+            }
             beat();
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden) beat();

@@ -152,7 +152,28 @@
             const FIRST_BEAT_GRACE_MS = 60000;
             const RESUME_GRACE_MS = 60000;
 
-            let currentTheme = localStorage.getItem('sprite-theme') === 'decayed' ? 'decayed' : 'default';
+            let inMemorySaveText = null;
+
+            function readLocalStorage(key) {
+                try {
+                    return localStorage.getItem(key);
+                } catch (err) {
+                    console.warn(`Storage read failed for ${key}:`, err);
+                    return null;
+                }
+            }
+
+            function writeLocalStorage(key, value) {
+                try {
+                    localStorage.setItem(key, value);
+                    return true;
+                } catch (err) {
+                    console.warn(`Storage write failed for ${key}:`, err);
+                    return false;
+                }
+            }
+
+            let currentTheme = readLocalStorage('sprite-theme') === 'decayed' ? 'decayed' : 'default';
             let lastBeat = Date.now();
             let frameLoadAt = Date.now();
             let hasBeat = false;
@@ -180,20 +201,18 @@
             }
 
             function readSavedGame() {
-                try {
-                    return localStorage.getItem(SAVE_KEY);
-                } catch (_err) {
-                    return null;
+                const persisted = readLocalStorage(SAVE_KEY);
+                if (typeof persisted === 'string') {
+                    inMemorySaveText = persisted;
+                    return persisted;
                 }
+                return inMemorySaveText;
             }
 
             function writeSavedGame(saveText) {
                 if (typeof saveText !== 'string') return;
-                try {
-                    localStorage.setItem(SAVE_KEY, saveText);
-                } catch (err) {
-                    console.warn('Failed to write save data from iframe:', err);
-                }
+                inMemorySaveText = saveText;
+                writeLocalStorage(SAVE_KEY, saveText);
             }
 
             function triggerDownload(filename, text) {
@@ -234,7 +253,7 @@
 
             function setTheme(theme) {
                 currentTheme = theme === 'decayed' ? 'decayed' : 'default';
-                localStorage.setItem('sprite-theme', currentTheme);
+                writeLocalStorage('sprite-theme', currentTheme);
                 applyThemeButton();
                 postThemeToGame();
             }

@@ -51,7 +51,7 @@ from raylib_compat import (
 )
 
 if _WEB:
-    from raylib_compat import get_inactive_time
+    from raylib_compat import get_inactive_time, is_save_requested
 
 if not _WEB:
     from raylib_compat import (
@@ -303,8 +303,11 @@ async def main() -> None:
     prev_mx, prev_my = 0.0, 0.0
 
     if _WEB:
+        # Persist the loaded/caught-up state immediately, then keep the maximum
+        # loss window short for browsers that evict background tabs.
+        save_game(sim, save_path)
         last_save_time = get_time()
-        AUTO_SAVE_INTERVAL = 30.0  # Auto-save every 30 seconds
+        AUTO_SAVE_INTERVAL = 5.0
 
     try:
         while True:
@@ -322,11 +325,19 @@ async def main() -> None:
                     save_game(sim, save_path)
                     last_save_time = get_time()
 
+            # visibilitychange/pagehide wakes one final frame before Safari
+            # suspends the iframe, avoiding reliance on beforeunload.
+            if _WEB and is_save_requested():
+                save_game(sim, save_path)
+                last_save_time = get_time()
+
             # Check for pending file import (queued by JS file input)
             if _WEB:
                 pending_import = get_pending_file_import()
                 if pending_import is not None:
-                    _handle_file_import(str(pending_import))
+                    if _handle_file_import(str(pending_import)):
+                        save_game(sim, save_path)
+                        last_save_time = get_time()
 
             # RE fn 10408 lines 387652-387665: ticks only run when
             # NOT manually paused AND no UI panel is open.  Controller+0x28

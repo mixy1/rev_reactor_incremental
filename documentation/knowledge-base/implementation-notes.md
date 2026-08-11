@@ -61,7 +61,15 @@ Next: decode serialized component stats from recovered MonoBehaviour blobs and w
 - The iframe watchdog now uses a 12-second timeout, a 60-second startup/resume grace period, and a request/response probe before restarting the runtime. Heartbeats run every two seconds and immediately on visibility return, avoiding false reloads after ordinary tab switches.
 - Web rendering is paced at 30 FPS while active or animated, 10 FPS while idle, and zero frames while hidden. Repeated sprite tinting and per-frame command strings are cached/deduplicated.
 - Simulation hot paths now cache upgrade bonuses, component multipliers, grid topology, clean preview values, help wrapping, and store-page results. A like-for-like stable 304-component native benchmark improved from roughly 4,936 to 21,232 ticks/second (4.3×).
-- Regression coverage includes five Python lifecycle/cache tests and two Node tests for hidden-tab timing and renderer wake-up behavior.
+- Regression coverage includes five Python lifecycle/cache tests.
+
+## Safari save persistence (2026-08-11)
+
+- Web autosaves now run every five seconds and persist the loaded/caught-up state immediately at startup.
+- `visibilitychange` and `pagehide` request a fresh Python serialization. The renderer wakes exactly one pending frame for that save, then returns to zero background rendering/simulation work.
+- The sandboxed game frame retries its host-state request every 250 ms until the host responds. It no longer treats a short timeout as an empty save, preventing a fast cached iframe from overwriting existing state before the host message listener is ready.
+- Host storage access is guarded for Safari privacy/storage exceptions. The latest serialized state remains available in host memory for iframe watchdog restarts even if durable browser storage is unavailable.
+- Repository-local JavaScript coverage now includes five tests for catch-up timing, hidden rendering, lifecycle-save wake-up, host-state retries, and blocked-storage behavior.
 
 ## Save compatibility note (2026-02-13)
 
