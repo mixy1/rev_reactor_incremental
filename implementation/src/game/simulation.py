@@ -874,7 +874,7 @@ class Simulation:
                 vid = id(ncomp)
                 if vid in seen_vent_ids:
                     continue
-                cap = self.vent_dissipation_capacity_for(ncomp)
+                cap = min(self.vent_dissipation_capacity_for(ncomp), self.outlet_transfer_rate_for(comp))
                 if cap > 0:
                     seen_vent_ids.add(vid)
                     total += cap
@@ -1038,6 +1038,8 @@ class Simulation:
                 u.level = 0
         self.store.exotic_particles = self.store.total_exotic_particles
         self.prestige_can_refund = False
+        # Subspace Expansion (upgrade 50) is a prestige upgrade: shrink the grid back
+        self.resize_grid_for_subspace()
         self.recompute_max_capacities()
 
     def resize_grid_for_subspace(self, base_width: int = 19, base_height: int = 16) -> None:
@@ -1056,6 +1058,12 @@ class Simulation:
         if new_w != self.grid.width or new_h != self.grid.height:
             self.grid.resize(new_w, new_h)
             self._pulses_dirty = True
+            # A smaller grid drops any parts outside it; drop them from the
+            # component list too so they no longer tick or count towards capacity.
+            kept = [c for c in self.components if self.grid.in_bounds(c.grid_x, c.grid_y, c.grid_z)]
+            if len(kept) != len(self.components):
+                self.components[:] = kept
+                self.recompute_max_capacities()
 
     def recompute_max_capacities(self) -> None:
         """RE: unnamed_function_10412/10413 — recompute maxHeat and maxPower.

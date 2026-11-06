@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+import json
 import math
 import re
 from typing import Optional
@@ -19,6 +20,17 @@ from raylib_compat import (
     draw_texture_ex,
     draw_texture_pro,
     end_scissor_mode,
+    get_time,
+    get_mouse_wheel_move,
+    is_key_down,
+    is_key_pressed,
+    is_mouse_button_down,
+    is_mouse_button_pressed,
+    KEY_ESCAPE,
+    KEY_SHIFT,
+    MOUSE_BUTTON_LEFT,
+    MOUSE_BUTTON_MIDDLE,
+    MOUSE_BUTTON_RIGHT,
     measure_text,
     Vector2,
 )
@@ -27,6 +39,207 @@ from game.layout import Layout
 from game.types import ComponentTypeStats
 from game.simulation import ReactorComponent, Simulation
 from game.upgrades import UpgradeManager, UpgradeType
+
+
+# ── Blueprint helpers (inlined so the web bundle needs no new file) ──
+# Blueprints live on the simulation (sim.blueprints) and are written as part of
+# the normal game save by game/save.py. Saving or deleting one sets
+# sim.blueprints_dirty so the main loop writes the save straight away.
+
+
+def _bp_list(sim) -> list:
+    """The simulation's blueprint list (created if missing)."""
+    bps = getattr(sim, "blueprints", None)
+    if not isinstance(bps, list):
+        bps = []
+        try:
+            sim.blueprints = bps
+        except AttributeError:
+            pass
+    return bps
+
+
+def _bp_mark_dirty(sim) -> None:
+    try:
+        sim.blueprints_dirty = True
+    except AttributeError:
+        pass
+
+
+def _bp_cell_rect(grid, x: int, y: int) -> tuple[int, int, int, int]:
+    """Exact on-screen rect of cell (x, y). Neighbouring cells share edges even
+    when the zoomed cell size is fractional."""
+    if hasattr(grid, "cell_rect"):
+        return grid.cell_rect(x, y)
+    px, py = grid.cell_to_screen(x, y)
+    nx, ny = grid.cell_to_screen(x + 1, y + 1)
+    return int(px), int(py), int(nx - px), int(ny - py)
+
+
+def _bp_in_rect(x: int, y: int, rect) -> bool:
+    return rect is None or (rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3])
+
+
+def _bp_capture(sim, name: str, rect=None) -> Optional[dict]:
+    """Snapshot placed components (only those inside rect, if given)."""
+    grid = sim.grid
+    if grid is None:
+        return None
+    cells = [
+        [int(gx), int(gy), comp.stats.name]
+        for gx, gy, _gz, comp in grid.iter_cells()
+        if comp is not None and _bp_in_rect(gx, gy, rect)
+    ]
+    if not cells:
+        return None
+    return {"name": name, "cells": cells}
+
+
+def _bp_bounds(bp: dict) -> tuple[int, int, int, int]:
+    xs, ys = [], []
+    for entry in bp.get("cells", []):
+        try:
+            xs.append(int(entry[0]))
+            ys.append(int(entry[1]))
+        except Exception:
+            continue
+    if not xs:
+        return 0, 0, 0, 0
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+# Vertical nudge (px) for the banner thumbnail so it looks centred in the banner art.
+_BP_THUMB_Y_OFFSET = 6
+# How much shorter (px) the thumbnail's max height is than the old square size.
+_BP_THUMB_H_SHRINK = 4
+# Colour of the "needs force" outline (the save selection's outline, in red).
+_BP_FORCE_OUTLINE_COLOR = (255, 60, 60)
+
+_BP_MOUSE_BUTTONS = (MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE)
+
+
+def _bp_discover_key_codes() -> tuple[tuple, tuple]:
+    """(own, extra): own = every KEY_* constant raylib_compat defines (so this
+    works whatever numbering or type the web/native build uses); extra = a wide
+    integer range covering raylib (32-348) and browser keyCodes (8-222)."""
+    import raylib_compat as _rc
+
+    own, seen = [], set()
+    for name, val in vars(_rc).items():
+        if name.startswith("KEY_") and not isinstance(val, bool) and isinstance(val, (int, str)) and val:
+            if val not in seen:
+                seen.add(val)
+                own.append(val)
+    extra = []
+    if isinstance(getattr(_rc, "KEY_ESCAPE", 256), int):
+        extra = [k for k in range(8, 349) if k not in seen]
+    return tuple(own), tuple(extra)
+
+
+_BP_OWN_KEYS, _BP_EXTRA_KEYS = _bp_discover_key_codes()
+
+
+def _bp_safe(fn, arg) -> bool:
+    """Call an input query; only a real True (or non-zero int) counts. Errors and
+    odd return types (e.g. JS proxies on the web build) count as False."""
+    try:
+        v = fn(arg)
+    except Exception:
+        return False
+    return v is True or (type(v) is int and v != 0)
+
+
+def _bp_wheel() -> float:
+    try:
+        w = get_mouse_wheel_move()
+        return float(w) if isinstance(w, (int, float)) else 0.0
+    except Exception:
+        return 0.0
+
+
+def _bp_anchor_offset(bp: dict, cx: int, cy: int, grid=None) -> tuple[int, int]:
+    """Shift that puts the blueprint's centre cell under grid cell (cx, cy),
+    snapped to the nearest position where every part is inside the grid.
+    (A blueprint larger than the grid can't fit and is left unclamped.)"""
+    minx, miny, maxx, maxy = _bp_bounds(bp)
+    cols, rows = maxx - minx + 1, maxy - miny + 1
+    ox = cx - (minx + cols // 2)
+    oy = cy - (miny + rows // 2)
+    gw = getattr(grid, "width", None)
+    gh = getattr(grid, "height", None)
+    if gw is not None and cols <= gw:
+        ox = max(-minx, min(ox, gw - 1 - maxx))
+    if gh is not None and rows <= gh:
+        oy = max(-miny, min(oy, gh - 1 - maxy))
+    return ox, oy
+
+
+def _bp_total_cost(sim, bp: dict) -> float:
+    lookup = {c.name: c for c in sim.shop_components}
+    total = 0.0
+    for entry in bp.get("cells", []):
+        try:
+            stats = lookup.get(str(entry[2]))
+        except Exception:
+            continue
+        if stats is not None:
+            total += sim.get_component_cost(stats)
+    return total
+
+
+def _bp_targets(sim, bp: dict, ox: int, oy: int, force: bool = False) -> list:
+    """Resolve each blueprint cell (shifted by ox, oy) to (stats, x, y, reason).
+
+    reason:
+      "ok"      empty cell, or a depleted component that will be swapped out
+      "same"    a live component of the right type is already there; blocks
+                placement unless Shift is held, then it is left alone
+      "forced"  live component of a DIFFERENT type, sold because Shift is held
+      "blocked" occupied by a live component, off the grid, or unknown part
+      "broke"   placeable, but not enough money (refunds from sold parts count)
+    """
+    grid = sim.grid
+    lookup = {c.name: c for c in sim.shop_components}
+    gw = getattr(grid, "width", None)
+    gh = getattr(grid, "height", None)
+    spent = 0.0
+    out = []
+    for entry in bp.get("cells", []):
+        try:
+            x, y, name = int(entry[0]) + ox, int(entry[1]) + oy, str(entry[2])
+        except Exception:
+            continue
+        stats = lookup.get(name)
+        reason = "ok"
+        refund = 0.0
+        if stats is None:
+            reason = "blocked"
+        elif gw is not None and gh is not None and not (0 <= x < gw and 0 <= y < gh):
+            reason = "blocked"
+        else:
+            existing = None
+            try:
+                existing = grid.get(x, y, 0)
+            except Exception:
+                reason = "blocked"
+            if reason == "ok" and existing is not None:
+                if getattr(existing, "depleted", False):
+                    refund = Simulation.sell_value(existing)
+                elif existing.stats.name == stats.name:
+                    reason = "same"  # already correct: never sold, costs nothing
+                elif force:
+                    reason = "forced"
+                    refund = Simulation.sell_value(existing)
+                else:
+                    reason = "blocked"
+        if reason in ("ok", "forced"):
+            net = sim.get_component_cost(stats) - refund
+            if sim.store.money - spent < net:
+                reason = "broke"
+            else:
+                spent += net
+        out.append((stats, x, y, reason))
+    return out
 
 
 @dataclass
@@ -69,6 +282,620 @@ class Ui:
     help_scroll_y: float = 0.0  # scroll offset for help panel
     help_drag_active: bool = False  # drag-to-scroll state
     help_drag_last_y: float = 0.0
+    # Blueprint panel state
+    blueprints: list = field(default_factory=list)
+    blueprint_index: int = 0
+    blueprints_loaded: bool = False
+    blueprint_confirm_delete: bool = False
+    blueprint_placing: bool = False
+    blueprint_selecting: bool = False  # drag-select an area to save
+    blueprint_sel_rect: Optional[tuple] = None  # (x0, y0, x1, y1) inclusive cells
+    blueprint_sel_anchor: Optional[tuple] = None
+    blueprint_sel_dragging: bool = False
+    _bp_force_outline: Optional[tuple] = None  # (x0, y0, x1, y1) from the ghost, drawn in draw()
+    _bp_rmb_latch: bool = False  # right-click blocked until released (after a cancel)
+    _bp_preview_open: bool = False  # enlarged blueprint view is showing
+    _bp_input_latch: bool = False  # after closing it: swallow input until mouse released
+    _bp_watch_mouse: frozenset = frozenset()  # buttons down at the last check
+    _bp_watch_keys: frozenset = frozenset()  # keys down at the last check
+    _bp_watch_wheel: float = 0.0
+    _bp_input_blocked: bool = False  # this frame's input-gate result
+    _bp_delete_rect: Optional[tuple] = None  # Delete/"Sure?" button rect from last panel draw
+    blueprint_status: str = ""
+    blueprint_status_until: float = 0.0
+
+    def _bp_say(self, text: str) -> None:
+        self.blueprint_status = text
+        self.blueprint_status_until = get_time() + 3.5
+
+    def _bp_sync(self, sim: Simulation) -> None:
+        """Point at the simulation's blueprint list (it is replaced on load/import)."""
+        self.blueprints = _bp_list(sim)
+
+    def _bp_current(self) -> Optional[dict]:
+        if not self.blueprints:
+            return None
+        self.blueprint_index = max(0, min(self.blueprint_index, len(self.blueprints) - 1))
+        return self.blueprints[self.blueprint_index]
+
+    def _bp_sprite_lookup(self, sim: Simulation) -> dict:
+        return {c.name: c.sprite_name for c in sim.shop_components}
+
+    def blueprint_blocks_right_click(self) -> bool:
+        """Call each frame before right-click selling/deselecting.
+
+        Right-click while placing or selecting cancels that mode, and right-click
+        then stays blocked until the button is released, so the press that
+        cancelled can't go on to sell the component under the cursor. Safe to
+        call more than once per frame."""
+        down = is_mouse_button_down(MOUSE_BUTTON_RIGHT)
+        if self._bp_rmb_latch and not down:
+            self._bp_rmb_latch = False
+        if (self.blueprint_placing or self.blueprint_selecting) and (
+            down or is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+        ):
+            self.cancel_blueprint_modes()
+            self._bp_rmb_latch = True
+        return self._bp_rmb_latch
+
+    def _bp_handle_input(self, sim: Simulation, mouse_x: float, mouse_y: float) -> None:
+        """Blueprint input: right-click / Esc cancel and drag-selection."""
+        self.blueprint_blocks_right_click()
+        if sim.view_mode != "reactor" or not (self.blueprint_selecting or self.blueprint_placing):
+            return
+        if is_key_pressed(KEY_ESCAPE):
+            self.cancel_blueprint_modes()
+            return
+        self.update_blueprint_selection(
+            sim, mouse_x, mouse_y,
+            is_mouse_button_down(MOUSE_BUTTON_LEFT),
+            is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
+        )
+
+    def _bp_input_snapshot(self) -> tuple[frozenset, frozenset]:
+        mouse = frozenset(b for b in _BP_MOUSE_BUTTONS if _bp_safe(is_mouse_button_down, b))
+        keys = frozenset(k for k in _BP_OWN_KEYS + _BP_EXTRA_KEYS if _bp_safe(is_key_down, k))
+        return mouse, keys
+
+    def _bp_watch_begin(self) -> None:
+        """Baseline for new-input detection: anything already held (e.g. the
+        click that opened the preview) is ignored until released."""
+        self._bp_watch_mouse, self._bp_watch_keys = self._bp_input_snapshot()
+        self._bp_watch_wheel = _bp_wheel()
+
+    def _bp_watch_new_input(self) -> tuple[frozenset, bool, bool]:
+        """New presses since the last check: (new mouse buttons, any new key, wheel).
+        A press counts only as an up->down change (or the build's own one-frame
+        "pressed" signal for a button/key that wasn't already held)."""
+        mouse, keys = self._bp_input_snapshot()
+        prev_mouse, prev_keys = self._bp_watch_mouse, self._bp_watch_keys
+        new_mouse = set(mouse - prev_mouse)
+        for b in _BP_MOUSE_BUTTONS:
+            if b not in prev_mouse and _bp_safe(is_mouse_button_pressed, b):
+                new_mouse.add(b)
+        new_key = bool(keys - prev_keys) or any(
+            k not in prev_keys and _bp_safe(is_key_pressed, k) for k in _BP_OWN_KEYS
+        )
+        w = _bp_wheel()
+        wheel = w != 0.0 and w != self._bp_watch_wheel
+        self._bp_watch_mouse, self._bp_watch_keys, self._bp_watch_wheel = mouse, keys, w
+        return frozenset(new_mouse), new_key, wheel
+
+    def cancel_blueprint_modes(self) -> None:
+        """Leave placement and selection modes, clear any selection, and drop a
+        pending delete confirmation."""
+        self.blueprint_confirm_delete = False
+        self.blueprint_placing = False
+        self.blueprint_selecting = False
+        self.blueprint_sel_rect = None
+        self.blueprint_sel_anchor = None
+        self.blueprint_sel_dragging = False
+
+    def update_blueprint_selection(
+        self, sim: Simulation, mouse_x: float, mouse_y: float, mouse_down: bool, mouse_pressed: bool
+    ) -> None:
+        """Click-and-drag rectangle selection on the grid (while saving)."""
+        if not self.blueprint_selecting or sim.grid is None:
+            return
+        grid = sim.grid
+        if mouse_pressed:
+            cell = grid.screen_to_cell(int(mouse_x), int(mouse_y))
+            if cell is not None:  # presses on the banner/buttons are ignored
+                self.blueprint_sel_anchor = (cell[0], cell[1])
+                self.blueprint_sel_dragging = True
+                self.blueprint_sel_rect = (cell[0], cell[1], cell[0], cell[1])
+        elif self.blueprint_sel_dragging and mouse_down:
+            cell = grid.screen_to_cell_unbounded(int(mouse_x), int(mouse_y))
+            if cell is not None and self.blueprint_sel_anchor is not None:
+                cx, cy = cell
+                gw = getattr(grid, "width", None)
+                gh = getattr(grid, "height", None)
+                if gw is not None:
+                    cx = max(0, min(cx, gw - 1))
+                if gh is not None:
+                    cy = max(0, min(cy, gh - 1))
+                ax, ay = self.blueprint_sel_anchor
+                self.blueprint_sel_rect = (min(ax, cx), min(ay, cy), max(ax, cx), max(ay, cy))
+        if self.blueprint_sel_dragging and not mouse_down:
+            self.blueprint_sel_dragging = False
+
+    def draw_blueprint_selection(self, sim: Simulation) -> None:
+        """Blue translucent selection rectangle (caller clips to the grid viewport)."""
+        if not self.blueprint_selecting or self.blueprint_sel_rect is None or sim.grid is None:
+            return
+        grid = sim.grid
+        x0, y0, x1, y1 = self.blueprint_sel_rect
+        try:
+            px, py = grid.cell_to_screen(x0, y0)
+            ex, ey = grid.cell_to_screen(x1 + 1, y1 + 1)
+        except Exception:
+            return
+        w, h = ex - px, ey - py
+        draw_rectangle(int(px), int(py), int(w), int(h), Color(70, 140, 255, 80))
+        draw_rectangle_lines(int(px), int(py), int(w), int(h), Color(120, 190, 255, 255))
+        if w > 4 and h > 4:
+            draw_rectangle_lines(int(px) + 1, int(py) + 1, int(w) - 2, int(h) - 2, Color(120, 190, 255, 255))
+
+    def _bp_count_in_rect(self, sim: Simulation, rect) -> int:
+        if sim.grid is None or rect is None:
+            return 0
+        return sum(1 for gx, gy, _gz, c in sim.grid.iter_cells() if c is not None and _bp_in_rect(gx, gy, rect))
+
+    def _bp_cost_in_rect(self, sim: Simulation, rect) -> float:
+        """Current buy price of every component inside the selection."""
+        if sim.grid is None or rect is None:
+            return 0.0
+        return sum(
+            sim.get_component_cost(c.stats)
+            for gx, gy, _gz, c in sim.grid.iter_cells()
+            if c is not None and _bp_in_rect(gx, gy, rect)
+        )
+
+    def draw_blueprint_ghost(self, sim: Simulation, mouse_x: float, mouse_y: float) -> None:
+        """Translucent preview of the selected blueprint under the cursor.
+        Green = placeable (empty or depleted cell), grey = already correct,
+        blue = different live component that Shift will sell, amber = can't afford, red = blocked / out of range.
+        A red outline around the whole blueprint means a normal click won't place
+        it here (it needs Shift to force); it's hidden while Shift is held. The
+        outline is only worked out here; Ui.draw draws it later, over the grid
+        frame, clipped like the save selection box.
+        Call inside the grid scissor region (before the grid frame is drawn)."""
+        self._bp_force_outline = None
+        if not self.blueprint_placing or sim.grid is None:
+            return
+        self._bp_sync(sim)
+        bp = self._bp_current()
+        if bp is None:
+            return
+        grid = sim.grid
+        cell = grid.screen_to_cell(int(mouse_x), int(mouse_y))
+        if cell is None:
+            return
+        ox, oy = _bp_anchor_offset(bp, cell[0], cell[1], grid)
+        cell_sz = grid.view_cell_size
+        sprites = self.component_sprites or {}
+        colours = {
+            "ok": (90, 255, 110),
+            "same": (200, 200, 215),
+            "forced": (90, 170, 255),
+            "broke": (255, 190, 60),
+            "blocked": (255, 70, 70),
+        }
+        force = is_key_down(KEY_SHIFT)
+        targets = _bp_targets(sim, bp, ox, oy, force)
+        # Would a normal click be refused here? Then outline in red, but only
+        # while Shift isn't held (holding it is the force).
+        needs_force = not force and any(t[3] in ("blocked", "same", "broke") for t in targets)
+        for stats, x, y, reason in targets:
+            try:
+                px, py, cw, ch = _bp_cell_rect(grid, x, y)
+            except Exception:
+                continue
+            r, g, b = colours[reason]
+            draw_rectangle(px, py, cw, ch, Color(r, g, b, 70))
+            tex = sprites.get(stats.sprite_name) if stats is not None else None
+            if tex is not None:
+                scale = min(1.0, cw / max(1, tex.width), ch / max(1, tex.height))
+                dw, dh = tex.width * scale, tex.height * scale
+                draw_texture_pro(
+                    tex,
+                    Rectangle(0, 0, tex.width, tex.height),
+                    Rectangle(px + (cw - dw) * 0.5, py + (ch - dh) * 0.5, dw, dh),
+                    Vector2(0, 0),
+                    0.0,
+                    Color(min(255, 120 + r // 2), min(255, 120 + g // 2), min(255, 120 + b // 2), 165),
+                )
+            draw_rectangle_lines(px, py, cw, ch, Color(r, g, b, 200))
+
+        if needs_force:
+            minx, miny, maxx, maxy = _bp_bounds(bp)
+            try:
+                bx, by = grid.cell_to_screen(minx + ox, miny + oy)
+            except Exception:
+                return
+            # Same kind of outline as the save selection: around the blueprint's
+            # cells, drawn later by Ui.draw (x, y, w, h).
+            right, bottom = grid.cell_to_screen(maxx + ox + 1, maxy + oy + 1)
+            self._bp_force_outline = (int(bx), int(by), int(right - bx), int(bottom - by))
+
+    def _draw_force_outline(self) -> None:
+        """Red "needs force" outline worked out by draw_blueprint_ghost this frame:
+        the same 2-line outline as the save selection box, in red."""
+        if self._bp_force_outline is None:
+            return
+        x, y, w, h = self._bp_force_outline
+        red = Color(*_BP_FORCE_OUTLINE_COLOR, 255)
+        draw_rectangle_lines(x, y, w, h, red)
+        if w > 4 and h > 4:
+            draw_rectangle_lines(x + 1, y + 1, w - 2, h - 2, red)
+
+    def place_blueprint_at(self, sim: Simulation, cx: int, cy: int, quiet: bool = False) -> None:
+        """Stamp the selected blueprint centred on cell (cx, cy). Silent: the
+        ghost's colours and red outline already show what will happen.
+
+        Without Shift, nothing is placed if any part is blocked or unaffordable.
+        Depleted components are swapped out automatically. Holding Shift sells
+        live blockers of a different type (matching parts are left alone) and
+        places whatever parts can be afforded. Costs are charged as normal,
+        sales refunded. `quiet` is accepted for main.py compatibility (unused)."""
+        self._bp_sync(sim)
+        bp = self._bp_current()
+        if bp is None or sim.grid is None:
+            return
+        ox, oy = _bp_anchor_offset(bp, cx, cy, sim.grid)
+        force = is_key_down(KEY_SHIFT)
+        targets = _bp_targets(sim, bp, ox, oy, force)
+        # Without Shift, an already-correct part still blocks placement (it is
+        # only skipped, not sold, when Shift forces the placement).
+        if any(t[3] == "blocked" or (t[3] == "same" and not force) for t in targets):
+            return
+        # Without Shift it's all-or-nothing on cost too; Shift places what it can.
+        if not force and any(t[3] == "broke" for t in targets):
+            return
+        for stats, x, y, reason in targets:
+            if reason not in ("ok", "forced"):
+                continue  # "same" is left alone, "broke" is skipped under Shift
+            existing = sim.grid.get(x, y, 0)
+            if existing is not None:
+                sim.remove_component(x, y, recompute_capacities=False)
+                sim.store.money += Simulation.sell_value(existing)
+            cost = sim.get_component_cost(stats)
+            if sim.place_component(x, y, ReactorComponent(stats=stats), recompute_capacities=False):
+                sim.store.money -= cost
+        sim.recompute_max_capacities()
+
+    def _draw_blueprint_cells(self, sim: Simulation, bp: dict, ox: int, oy: int, cs: int) -> None:
+        """Grid tiles under the blueprint's bounding box, then its component sprites."""
+        minx, miny, maxx, maxy = _bp_bounds(bp)
+        cols, rows = maxx - minx + 1, maxy - miny + 1
+        tile = getattr(sim.grid, "tile_texture", None) if sim.grid is not None else None
+        for ry in range(rows):
+            for rx in range(cols):
+                tx, ty = ox + rx * cs, oy + ry * cs
+                if tile is not None:
+                    draw_texture_pro(
+                        tile,
+                        Rectangle(0, 0, tile.width, tile.height),
+                        Rectangle(tx, ty, cs, cs),
+                        Vector2(0, 0),
+                        0.0,
+                        Color(255, 255, 255, 255),
+                    )
+                else:
+                    draw_rectangle(tx, ty, cs, cs, Color(30, 34, 44, 255))
+        sprites = self.component_sprites or {}
+        names = self._bp_sprite_lookup(sim)
+        for entry in bp.get("cells", []):
+            try:
+                cx, cy, name = int(entry[0]) - minx, int(entry[1]) - miny, str(entry[2])
+            except Exception:
+                continue
+            px, py = ox + cx * cs, oy + cy * cs
+            tex = sprites.get(names.get(name))
+            if tex is None:
+                draw_rectangle(px, py, cs, cs, Color(120, 120, 140, 255))
+                continue
+            scale = cs / max(1, max(tex.width, tex.height))
+            dw, dh = tex.width * scale, tex.height * scale
+            draw_texture_pro(
+                tex,
+                Rectangle(0, 0, tex.width, tex.height),
+                Rectangle(px + (cs - dw) * 0.5, py + (cs - dh) * 0.5, dw, dh),
+                Vector2(0, 0),
+                0.0,
+                Color(255, 255, 255, 255),
+            )
+
+    def _draw_blueprint_thumb(
+        self, sim: Simulation, bp: dict, col_x: int, center_y: int, max_w: int, max_h: int
+    ) -> tuple[int, int, int, int]:
+        """Bordered thumbnail fitted to the blueprint's shape. The box (border
+        included) is at most max_w x max_h, centred horizontally in a column
+        starting at col_x and vertically on center_y. Returns the box rect."""
+        pad = 2  # 1px border + 1px gap
+        minx, miny, maxx, maxy = _bp_bounds(bp)
+        cols, rows = maxx - minx + 1, maxy - miny + 1
+        cs = max(2, min((max_w - 2 * pad) // cols, (max_h - 2 * pad) // rows, 20))
+        box_w = cols * cs + 2 * pad
+        box_h = rows * cs + 2 * pad
+        x = col_x + max(0, (max_w - box_w) // 2)
+        y = center_y - box_h // 2
+        self._draw_blueprint_cells(sim, bp, x + pad, y + pad, cs)
+        draw_rectangle_lines(x, y, box_w, box_h, Color(100, 110, 140, 255))
+        return x, y, box_w, box_h
+
+    def blueprint_input_gate(self) -> bool:
+        """Call once per frame BEFORE any input handling. True = ignore all input.
+
+        While the enlarged blueprint view is open, input is swallowed and any
+        press, key or wheel movement closes it. After it closes, input stays
+        blocked until every mouse button is released, so the closing click
+        can't place, sell or press anything."""
+        blocked = False
+        if self._bp_preview_open:
+            new_mouse, new_key, wheel = self._bp_watch_new_input()
+            if new_mouse or new_key or wheel:
+                self._bp_preview_open = False
+                # Only a mouse close needs the wait-for-release latch.
+                self._bp_input_latch = any(is_mouse_button_down(b) for b in _BP_MOUSE_BUTTONS)
+            blocked = True
+        elif self._bp_input_latch:
+            if any(is_mouse_button_down(b) for b in _BP_MOUSE_BUTTONS):
+                blocked = True
+            else:
+                self._bp_input_latch = False
+        self._bp_input_blocked = blocked
+        return blocked
+
+    def draw_blueprint_preview(self, sim: Simulation, layout: Layout) -> None:
+        """Enlarged view of the selected blueprint covering most of the screen.
+        Call last in the frame so it sits on top of everything."""
+        if not self._bp_preview_open:
+            return
+        self._bp_sync(sim)
+        bp = self._bp_current()
+        if bp is None:
+            self._bp_preview_open = False
+            return
+        win_w, win_h = layout.window_width, layout.window_height
+        text_color = Color(230, 230, 230, 255)
+        border = Color(100, 110, 140, 255)
+        draw_rectangle(0, 0, win_w, win_h, Color(0, 0, 0, 170))
+
+        mx_, my_ = max(16, win_w // 16), max(16, win_h // 16)
+        bx, by, bw, bh = mx_, my_, win_w - 2 * mx_, win_h - 2 * my_
+        draw_rectangle(bx, by, bw, bh, Color(18, 20, 28, 240))
+        draw_rectangle_lines(bx, by, bw, bh, border)
+
+        title = str(bp.get("name", "Blueprint"))
+        draw_text(title, bx + (bw - _measure(title, 20)) // 2, by + 14, 20, text_color)
+        total_cost = _bp_total_cost(sim, bp)
+        sub = f"{len(bp.get('cells', []))} parts  |  Total cost: {format_number_with_suffix(total_cost)}"
+        sub_color = Color(255, 170, 90, 255) if sim.store.money < total_cost else Color(190, 190, 200, 255)
+        draw_text(sub, bx + (bw - _measure(sub, 12)) // 2, by + 40, 12, sub_color)
+        hint = "Click or press any key to close"
+        draw_text(hint, bx + (bw - _measure(hint, 10)) // 2, by + bh - 22, 10, Color(150, 150, 165, 255))
+
+        minx, miny, maxx, maxy = _bp_bounds(bp)
+        cols, rows = maxx - minx + 1, maxy - miny + 1
+        top, bottom = by + 64, by + bh - 34
+        avail_w, avail_h = bw - 40, bottom - top
+        cs = max(4, min(avail_w // cols, avail_h // rows, 96))
+        gw, gh = cols * cs, rows * cs
+        ox = bx + (bw - gw) // 2
+        oy = top + (avail_h - gh) // 2
+        self._draw_blueprint_cells(sim, bp, ox, oy, cs)
+        draw_rectangle_lines(ox - 2, oy - 2, gw + 4, gh + 4, border)
+
+    def _bp_update_delete_confirm(self, mouse_x: float, mouse_y: float) -> None:
+        """While "Sure?" is showing, any input other than clicking it cancels."""
+        rect = self._bp_delete_rect
+        self._bp_delete_rect = None  # re-set by the panel when it's drawn this frame
+        if not self.blueprint_confirm_delete:
+            return
+        new_mouse, new_key, wheel = self._bp_watch_new_input()
+        if not (new_mouse or new_key or wheel):
+            return
+        if new_mouse == {MOUSE_BUTTON_LEFT} and not new_key and not wheel and rect is not None:
+            x, y, w, h = rect
+            if x <= mouse_x <= x + w and y <= mouse_y <= y + h:
+                return  # clicking "Sure?": the panel performs the delete
+        self.blueprint_confirm_delete = False
+
+    def draw_blueprint_panel(
+        self,
+        sim: Simulation,
+        layout: Layout,
+        mouse_x: float,
+        mouse_y: float,
+        mouse_pressed: bool,
+    ) -> None:
+        """Blueprint controls + thumbnail, shown in the top banner when nothing
+        is hovered."""
+        self._bp_sync(sim)
+        n = len(self.blueprints)
+        cur = self._bp_current()
+        if n == 0:
+            self.blueprint_placing = False
+
+        margin = 20
+        panel_x = layout.top_panel_x
+        panel_y = layout.top_panel_y
+        panel_h = layout.top_panel_h
+        right_edge = layout.pause_x - margin
+        usable_w = right_edge - panel_x - margin
+        text_color = Color(230, 230, 230, 255)
+        dim_color = Color(170, 170, 180, 255)
+        btn_h = 16
+        by = panel_y + panel_h - margin - 6
+
+        # Thumbnail on the left (nudged down to sit centred in the banner art).
+        # Max box: a few px shorter than the old square, twice as wide. The
+        # column width is fixed so the buttons don't shift between blueprints,
+        # and it gives way if the buttons would otherwise run out of room.
+        left = 0
+        if cur is not None:
+            base = max(32, min(panel_h - 20, 84))  # old square thumbnail size
+            max_h = base - _BP_THUMB_H_SHRINK
+            worst_labels = ("<", ">", "Confirm", "Cancel", "Cancel", "Delete")
+            btn_room = sum(max(18, _measure(l, 10) + 14) for l in worst_labels) + 6 * (len(worst_labels) - 1)
+            max_w = min(base * 2, max(base, usable_w - 14 - btn_room))
+            center_y = panel_y + panel_h // 2 + _BP_THUMB_Y_OFFSET
+            tx, ty, tw_, th_ = self._draw_blueprint_thumb(sim, cur, panel_x + margin, center_y, max_w, max_h)
+            if tx <= mouse_x <= tx + tw_ and ty <= mouse_y <= ty + th_:
+                draw_rectangle_lines(tx, ty, tw_, th_, Color(170, 190, 235, 255))
+                if mouse_pressed:
+                    self._bp_preview_open = True  # enlarge
+                    self._bp_watch_begin()
+            left = max_w + 14
+        region_x = panel_x + margin + left
+        region_w = max(40, usable_w - left)
+
+        # Total cost: of the live selection while saving, else of the whole blueprint
+        cost_txt = ""
+        cost_color = text_color
+        if self.blueprint_selecting:
+            if self.blueprint_sel_rect is not None:
+                total_cost = self._bp_cost_in_rect(sim, self.blueprint_sel_rect)
+                cost_txt = f"Total cost: {format_number_with_suffix(total_cost)}"
+                if sim.store.money < total_cost:
+                    cost_color = Color(255, 170, 90, 255)
+        elif cur is not None:
+            total_cost = _bp_total_cost(sim, cur)
+            cost_txt = f"Total cost: {format_number_with_suffix(total_cost)}"
+            if sim.store.money < total_cost:
+                cost_color = Color(255, 170, 90, 255)
+        cost_y = panel_y + 56
+        cost_has_room = cost_y + 10 <= by - 1
+
+        title = "Blueprints"
+        if cost_txt and not cost_has_room:
+            title = f"Blueprints - {cost_txt}"
+        tw = _measure(title, 16)
+        draw_text(title, region_x + max(0, (region_w - tw) // 2), panel_y + 20, 16, text_color)
+
+        # Info / status line
+        if self.blueprint_status and get_time() < self.blueprint_status_until:
+            info = self.blueprint_status
+            info_color = Color(245, 200, 70, 255)
+        elif self.blueprint_selecting:
+            rect = self.blueprint_sel_rect
+            if rect is None:
+                info = "Drag over the grid to select an area (Esc cancels)"
+                info_color = Color(120, 190, 255, 255)
+            else:
+                cnt = self._bp_count_in_rect(sim, rect)
+                info = f"Selected {rect[2] - rect[0] + 1}x{rect[3] - rect[1] + 1}, {cnt} parts. Confirm to save"
+                info_color = Color(120, 190, 255, 255)
+        elif self.blueprint_placing:
+            if is_key_down(KEY_SHIFT):
+                info = "Shift: force place (sells differing parts)"
+                info_color = Color(120, 190, 255, 255)
+            else:
+                info = "Click to place (Shift forces, Esc cancels)"
+                info_color = Color(120, 255, 140, 255)
+        elif cur is not None:
+            info = f"{self.blueprint_index + 1}/{n}: {cur.get('name', '?')} ({len(cur.get('cells', []))} parts)"
+            info_color = text_color
+        else:
+            info = "No saved blueprints. Build a reactor, then click Save."
+            info_color = dim_color
+        if _measure(info, 10) > region_w:
+            info = info[: max(4, region_w // 6)] + "..."
+        iw = _measure(info, 10)
+        draw_text(info, region_x + max(0, (region_w - iw) // 2), panel_y + 42, 10, info_color)
+
+        if cost_txt and cost_has_room:
+            cw = _measure(cost_txt, 10)
+            draw_text(cost_txt, region_x + max(0, (region_w - cw) // 2), cost_y, 10, cost_color)
+
+        # Button row
+        confirming = self.blueprint_confirm_delete and n > 0
+        labels = [
+            ("prev", "<", n > 1),
+            ("next", ">", n > 1),
+            ("save", "Confirm" if (self.blueprint_selecting and self.blueprint_sel_rect is not None) else ("Cancel" if self.blueprint_selecting else "Save"), True),
+            ("place", "Cancel" if self.blueprint_placing else "Place", n > 0),
+            ("delete", "Sure?" if confirming else "Delete", n > 0),
+        ]
+        if self.blueprint_selecting and self.blueprint_sel_rect is not None:
+            labels.insert(3, ("cancel_sel", "Cancel", True))
+        gap = 6
+        widths = [max(18, _measure(lbl, 10) + 14) for _, lbl, _ in labels]
+        total = sum(widths) + gap * (len(labels) - 1)
+        bx = region_x + max(0, (region_w - total) // 2)
+        action = None
+        for (key, lbl, enabled), w in zip(labels, widths):
+            hover = enabled and bx <= mouse_x <= bx + w and by <= mouse_y <= by + btn_h
+            if key == "delete":
+                self._bp_delete_rect = (bx, by, w, btn_h) if enabled else None
+            if not enabled:
+                bg, fg = Color(30, 30, 36, 220), Color(100, 100, 110, 255)
+            elif key == "delete" and confirming:
+                bg, fg = Color(150, 50, 40, 240), text_color
+            elif key == "place" and self.blueprint_placing:
+                bg, fg = Color(40, 110, 60, 240), text_color
+            elif key == "save" and self.blueprint_selecting:
+                bg, fg = Color(40, 90, 160, 240), text_color
+            elif hover:
+                bg, fg = Color(80, 90, 120, 240), text_color
+            else:
+                bg, fg = Color(45, 50, 70, 230), text_color
+            draw_rectangle(bx, by, w, btn_h, bg)
+            draw_rectangle_lines(bx, by, w, btn_h, Color(100, 110, 140, 255))
+            draw_text(lbl, bx + (w - _measure(lbl, 10)) // 2, by + 3, 10, fg)
+            if hover and mouse_pressed:
+                action = key
+            bx += w + gap
+
+        if action is None:
+            return
+        if action != "delete":
+            self.blueprint_confirm_delete = False
+
+        if action == "prev":
+            self.blueprint_index = (self.blueprint_index - 1) % n
+        elif action == "next":
+            self.blueprint_index = (self.blueprint_index + 1) % n
+        elif action == "save":
+            if not self.blueprint_selecting:
+                # Start drag-selecting an area of the reactor to save
+                self.cancel_blueprint_modes()
+                self.blueprint_selecting = True
+                sim.selected_component_index = -1
+            elif self.blueprint_sel_rect is None:
+                self.cancel_blueprint_modes()  # "Cancel" before anything was selected
+            else:
+                used = {b.get("name") for b in self.blueprints}
+                k = n + 1
+                while f"Design {k}" in used:
+                    k += 1
+                captured = _bp_capture(sim, f"Design {k}", self.blueprint_sel_rect)
+                if captured is None:
+                    self._bp_say("No components in the selected area.")
+                else:
+                    self.blueprints.append(captured)
+                    self.blueprint_index = len(self.blueprints) - 1
+                    _bp_mark_dirty(sim)
+                    self.cancel_blueprint_modes()
+                    self._bp_say(f"Saved {captured['name']}.")
+        elif action == "cancel_sel":
+            self.cancel_blueprint_modes()
+        elif action == "place":
+            was_placing = self.blueprint_placing
+            self.cancel_blueprint_modes()
+            self.blueprint_placing = not was_placing
+            if self.blueprint_placing:
+                sim.selected_component_index = -1  # blueprint replaces shop selection
+        elif action == "delete":
+            if confirming:
+                removed = self.blueprints.pop(self.blueprint_index)
+                _bp_mark_dirty(sim)
+                self.blueprint_confirm_delete = False
+                self._bp_say(f"Deleted {removed.get('name', 'blueprint')}.")
+            else:
+                self.blueprint_confirm_delete = True
+                self._bp_watch_begin()
 
     @staticmethod
     def draw_warning_badge(x: int, y: int, size: int = 12) -> None:
@@ -107,6 +934,10 @@ class Ui:
         mouse_y: float,
         mouse_pressed: bool,
     ) -> None:
+        if not self._bp_input_blocked:
+            self._bp_update_delete_confirm(mouse_x, mouse_y)
+            self._bp_handle_input(sim, mouse_x, mouse_y)
+
         # Heat bar (RE: fill = reactor_heat / maxHeat, clamped 0..1)
         heat_fill = 0.0
         if sim.max_reactor_heat > 0:
@@ -221,10 +1052,25 @@ class Ui:
         new_selected, hovered = self.draw_store(sim, layout, mouse_x, mouse_y, mouse_pressed)
         if new_selected is not None:
             sim.selected_component_index = new_selected
+            self.cancel_blueprint_modes()
         if hovered is not None:
             sim.hover_component = hovered
             sim.hover_placed_component = None  # shop hover overrides grid hover
-        self.draw_component_info(sim, layout)
+        self.draw_component_info(sim, layout, mouse_x, mouse_y, mouse_pressed)
+        # Blueprint save selection box, clipped to the grid viewport
+        if sim.view_mode == "reactor" and self.blueprint_selecting and sim.grid is not None:
+            g = sim.grid
+            begin_scissor_mode(g.origin_x, g.origin_y, g.viewport_w, g.viewport_h)
+            self.draw_blueprint_selection(sim)
+            end_scissor_mode()
+        # Blueprint "can't place" outline: drawn exactly like the selection box
+        # (over the grid frame, clipped to the grid viewport)
+        if sim.view_mode == "reactor" and self._bp_force_outline is not None and sim.grid is not None:
+            g = sim.grid
+            begin_scissor_mode(g.origin_x, g.origin_y, g.viewport_w, g.viewport_h)
+            self._draw_force_outline()
+            end_scissor_mode()
+        self._bp_force_outline = None
 
     def draw_store(
         self,
@@ -329,7 +1175,14 @@ class Ui:
             slots.append((comp, (int(x), int(y), int(slot_w), int(slot_h))))
         return slots
 
-    def draw_component_info(self, sim: Simulation, layout: Layout) -> None:
+    def draw_component_info(
+        self,
+        sim: Simulation,
+        layout: Layout,
+        mouse_x: float = -1.0,
+        mouse_y: float = -1.0,
+        mouse_pressed: bool = False,
+    ) -> None:
         """Draw the top info banner.  Background always visible; text slots
         are filled only when a component is hovered (RE: unnamed_function_10411).
 
@@ -367,7 +1220,15 @@ class Ui:
             )
 
         comp = sim.hover_component
-        if comp is None:
+        # Blueprint modes keep the banner on the blueprint controls, so hovering a
+        # component doesn't swap in its info while saving, placing or deleting.
+        if (
+            comp is None
+            or self.blueprint_selecting
+            or self.blueprint_placing
+            or self.blueprint_confirm_delete
+        ):
+            self.draw_blueprint_panel(sim, layout, mouse_x, mouse_y, mouse_pressed)
             return
 
         placed = sim.hover_placed_component

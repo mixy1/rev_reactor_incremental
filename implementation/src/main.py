@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
+import time
 
 _WEB = sys.platform == "emscripten"
 
@@ -63,6 +64,16 @@ if not _WEB:
         unload_texture,
     )
 
+import raylib_compat as _rc
+
+# Ctrl key codes for CTRL + wheel zoom: the build's own constants if it has
+# them, plus raylib's numbers (341 / 345) when its key codes are raylib ints.
+_CTRL_KEYS = tuple(
+    v for v in (getattr(_rc, "KEY_LEFT_CONTROL", None), getattr(_rc, "KEY_RIGHT_CONTROL", None),
+                getattr(_rc, "KEY_CONTROL", None))
+    if v is not None
+) or ((341, 345) if isinstance(getattr(_rc, "KEY_ESCAPE", 256), int) else ())
+
 from game.simulation import Simulation
 from game.save import save_game, load_game, _handle_file_import
 
@@ -76,6 +87,181 @@ from game.ui import Ui
 
 # Global reference for beforeunload auto-save from JS
 _sim_ref = None
+
+
+# ── Ctrl+wheel capture ─────────────────────────────────────────────
+# In a browser, Ctrl+wheel (and trackpad pinch, which arrives as Ctrl+wheel)
+# zooms the whole page. On the web build we listen to wheel events directly
+# (capture phase, non-passive). Over the game canvas we cancel the page zoom
+# and collect the movement in notches (+ = wheel up / zoom in); anywhere else
+# on the page Ctrl+wheel is left alone, so normal browser zoom still works.
+_web_zoom_wheel = [0.0]
+_web_ctrl_wheel_seen = [False]
+_web_ctrl_down = [False]        # Ctrl state from the browser's own key events
+_web_last_ctrl_wheel = [-1e9]   # time.monotonic() of the last Ctrl+wheel over the canvas
+_web_wheel_hooks: list = []  # keeps the JS proxies alive; non-empty = listener installed
+# After a Ctrl+wheel, ordinary wheel scrolling stays blocked this long (s): the
+# game's own wheel reading can deliver the same scroll a frame later.
+_ZOOM_SCROLL_BLOCK_S = 0.25
+
+
+def _install_web_ctrl_wheel() -> None:
+    try:
+        from js import window  # type: ignore
+        from pyodide.ffi import create_proxy  # type: ignore
+    except Exception:
+        return
+
+    def on_wheel(event) -> None:
+        try:
+            if not event.ctrlKey:
+                return
+            if str(getattr(event.target, "tagName", "")).upper() != "CANVAS":
+                return  # outside the game canvas: let the browser zoom the page
+            event.preventDefault()  # over the canvas: zoom the grid, not the page
+            _web_ctrl_wheel_seen[0] = True
+            _web_last_ctrl_wheel[0] = time.monotonic()
+            delta = float(event.deltaY) or float(event.deltaX)
+            if not delta:
+                return
+            mode = int(event.deltaMode)  # 0 = pixels, 1 = lines, 2 = pages
+            notch = delta / 3.0 if mode == 1 else (delta if mode == 2 else delta / 100.0)
+            _web_zoom_wheel[0] -= max(-1.0, min(1.0, notch))  # positive delta = wheel down
+        except Exception:
+            pass
+
+    try:
+        proxy = create_proxy(on_wheel)
+    except Exception:
+        return
+    try:  # passive: False is required for preventDefault on window-level wheel listeners
+        from js import Object  # type: ignore
+        from pyodide.ffi import to_js  # type: ignore
+        options = to_js({"capture": True, "passive": False}, dict_converter=Object.fromEntries)
+        window.addEventListener("wheel", proxy, options)
+    except Exception:
+        try:
+            window.addEventListener("wheel", proxy, True)
+        except Exception:
+            return
+    _web_wheel_hooks.append(proxy)
+
+    # Track Ctrl directly from key events (the build's key codes may not include
+    # Ctrl). Any key event also reports ctrlKey, which keeps the state honest if
+    # a keyup was missed; losing focus clears it.
+    def on_key(event) -> None:
+        try:
+            _web_ctrl_down[0] = bool(event.ctrlKey) or (
+                str(event.type) == "keydown" and str(event.key) == "Control")
+        except Exception:
+            pass
+
+    def on_blur(event) -> None:
+        _web_ctrl_down[0] = False
+
+    try:
+        key_proxy, blur_proxy = create_proxy(on_key), create_proxy(on_blur)
+        window.addEventListener("keydown", key_proxy, True)
+        window.addEventListener("keyup", key_proxy, True)
+        window.addEventListener("blur", blur_proxy)
+        _web_wheel_hooks.extend([key_proxy, blur_proxy])
+    except Exception:
+        pass
+
+
+def _ctrl_held() -> bool:
+    """Ctrl is held, or a Ctrl+wheel happened moments ago (so a scroll the game
+    reads a frame late still counts as zooming, not scrolling)."""
+    if _web_ctrl_wheel_seen[0] or _web_ctrl_down[0]:
+        return True
+    if time.monotonic() - _web_last_ctrl_wheel[0] < _ZOOM_SCROLL_BLOCK_S:
+        return True
+    for k in _CTRL_KEYS:
+        try:
+            if is_key_down(k) is True:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _take_zoom_wheel(wheel_y: float) -> float:
+    """Ctrl+wheel movement this frame, in notches (+ = up). 0 when Ctrl isn't held."""
+    if _web_wheel_hooks:
+        value = _web_zoom_wheel[0]
+        _web_zoom_wheel[0] = 0.0
+        return value
+    return wheel_y if _ctrl_held() else 0.0
+
+
+# GridFrame.png (630x524): the grid opening is ringed by a 2px dark outline at
+# x 11..618, y 1..512 (texture px). Outside it is the standard light grey, then
+# the outer game border (4px dark on the right, the blue band along the bottom).
+_FRAME_SIZE = (630, 524)
+_FRAME_OUTLINE = (11, 1, 619, 513)  # x0, y0, x1, y1 (exclusive)
+_FRAME_OUTLINE_PX = 2
+_FRAME_OUTLINE_COLOR = (75, 81, 103)
+_FRAME_GREY = (190, 192, 201)
+
+
+def _draw_game_frame(tex, fx: int, fy: int, grid, insets: tuple) -> None:
+    """Draw the game frame as-is. When the zoomed-out grid is smaller than its
+    opening, move the grid's 2px outline inwards by the gap on each side
+    (insets = left, top, right, bottom) and fill the space it leaves with the
+    standard light grey. The outer game border is never touched."""
+    white = Color(255, 255, 255, 255)
+    # Whole pixels throughout: the texture snaps to pixels anyway, but rectangles
+    # at fractional positions get soft edges that leave a faint line behind.
+    fx, fy = int(round(fx)), int(round(fy))
+    draw_texture_pro(tex, Rectangle(0, 0, tex.width, tex.height),
+                     Rectangle(fx, fy, tex.width, tex.height), Vector2(0, 0), 0.0, white)
+    # Repeat the frame's top row over itself and 1px higher (underneath the
+    # info-box area, which is drawn later). It must overlap, not just touch: when
+    # the game is scaled to the screen, two images that only meet at an edge both
+    # partly cover the boundary pixel and the background shows through.
+    draw_texture_pro(tex, Rectangle(0, 0, tex.width, 1),
+                     Rectangle(fx, fy - 1, tex.width, 2), Vector2(0, 0), 0.0, white)
+    l, t, r, b = (int(round(v)) for v in insets)
+    if not (l or t or r or b) or (tex.width, tex.height) != _FRAME_SIZE:
+        return
+    x0, y0, x1, y1 = (fx + _FRAME_OUTLINE[0], fy + _FRAME_OUTLINE[1],
+                      fx + _FRAME_OUTLINE[2], fy + _FRAME_OUTLINE[3])
+    grey = Color(*_FRAME_GREY, 255)
+    # 1) Light grey over the old outline and the gap it moves across. Each patch
+    #    also reaches 1px outward over the frame's own grey (same colour), so
+    #    nothing of the old outline can show at its outer edge.
+    if l:
+        draw_rectangle(x0 - 1, y0 - 1, l + 1, y1 - y0 + 2, grey)
+    if r:
+        draw_rectangle(x1 - r, y0 - 1, r + 1, y1 - y0 + 2, grey)
+    if t:
+        draw_rectangle(x0 - 1, y0 - 1, x1 - x0 + 2, t + 1, grey)
+    if b:
+        draw_rectangle(x0 - 1, y1 - b, x1 - x0 + 2, b + 1, grey)
+    # 2) The outline itself, moved in to meet the tiles. Only the sides that
+    #    move are redrawn; a side that stays put keeps the frame's own outline
+    #    (redrawing it as a rectangle would add a soft edge beside it when scaled).
+    #    Side strips run between the top and bottom rows, which come either from
+    #    a moved top/bottom strip or from the frame's own outline.
+    nx0, ny0, nx1, ny1 = x0 + l, y0 + t, x1 - r, y1 - b
+    k = _FRAME_OUTLINE_PX
+    line = Color(*_FRAME_OUTLINE_COLOR, 255)
+    if t:
+        draw_rectangle(nx0, ny0, nx1 - nx0, k, line)               # top
+    if b:
+        draw_rectangle(nx0, ny1 - k, nx1 - nx0, k, line)           # bottom
+    if l:
+        draw_rectangle(nx0, ny0 + k, k, ny1 - ny0 - 2 * k, line)   # left
+    if r:
+        draw_rectangle(nx1 - k, ny0 + k, k, ny1 - ny0 - 2 * k, line)  # right
+
+
+def _subspace_unlocked(sim) -> bool:
+    """Subspace Expansion (upgrade index 50) has been bought."""
+    try:
+        return any(u.index == 50 and u.level > 0 for u in sim.upgrade_manager.upgrades)
+    except Exception:
+        return False
 
 
 def _load_texture(name: str) -> Texture2D:
@@ -292,6 +478,7 @@ async def main() -> None:
     prev_mx, prev_my = 0.0, 0.0
 
     if _WEB:
+        _install_web_ctrl_wheel()
         last_save_time = get_time()
         AUTO_SAVE_INTERVAL = 30.0  # Auto-save every 30 seconds
 
@@ -325,49 +512,68 @@ async def main() -> None:
             # Explosion animations run even when paused (cosmetic only)
             sim.update_explosions(dt)
 
-            # ── Keyboard events ──────────────────────────────────────
-            if is_key_pressed(KEY_F1) and reference_textures:
-                show_reference = not show_reference
-            if is_key_pressed(KEY_F2) and reference_textures:
-                reference_index = (reference_index + 1) % len(reference_textures)
-            if is_key_pressed(KEY_F3) and reference_textures:
-                reference_index = (reference_index - 1) % len(reference_textures)
+            # Enlarged blueprint view: swallows all input while open (any
+            # press closes it) and until the mouse is released afterwards.
+            input_blocked = ui.blueprint_input_gate()
 
-            # F4 = take debug screenshot (saved to CWD by raylib)
-            if not _WEB and is_key_pressed(KEY_F4):
-                import time
-                ts = time.strftime("%Y%m%d_%H%M%S")
-                fname = f"debug_{sim.view_mode}_{ts}.png"
-                take_screenshot(fname)
+            if not input_blocked:
+                # ── Keyboard events ──────────────────────────────────────
+                if is_key_pressed(KEY_F1) and reference_textures:
+                    show_reference = not show_reference
+                if is_key_pressed(KEY_F2) and reference_textures:
+                    reference_index = (reference_index + 1) % len(reference_textures)
+                if is_key_pressed(KEY_F3) and reference_textures:
+                    reference_index = (reference_index - 1) % len(reference_textures)
 
-            # Space = toggle pause (RE: line 387964, writes PauseButton.IsToggled)
-            if is_key_pressed(KEY_SPACE):
-                sim.paused = not sim.paused
+                # F4 = take debug screenshot (saved to CWD by raylib)
+                if not _WEB and is_key_pressed(KEY_F4):
+                    import time
+                    ts = time.strftime("%Y%m%d_%H%M%S")
+                    fname = f"debug_{sim.view_mode}_{ts}.png"
+                    take_screenshot(fname)
 
-            # ESC: close overlay if open, else deselect (RE: line 387898-387908)
-            if is_key_pressed(KEY_ESCAPE):
-                if sim.view_mode != "reactor":
-                    sim.view_mode = "reactor"
-                else:
-                    sim.selected_component_index = -1
+                # Space = toggle pause (RE: line 387964, writes PauseButton.IsToggled)
+                if is_key_pressed(KEY_SPACE):
+                    sim.paused = not sim.paused
 
-            # X: debug — multiply money by 10
-            if not _WEB and is_key_pressed(KEY_X):
-                sim.store.money = max(sim.store.money * 10, 10.0)
+                # ESC: close overlay if open, else deselect (RE: line 387898-387908)
+                if is_key_pressed(KEY_ESCAPE):
+                    ui.cancel_blueprint_modes()
+                    if sim.view_mode != "reactor":
+                        sim.view_mode = "reactor"
+                    else:
+                        sim.selected_component_index = -1
 
-            # Y: debug — multiply exotic particles by 10
-            if not _WEB and is_key_pressed(KEY_Y):
-                sim.store.exotic_particles = max(sim.store.exotic_particles * 10, 10.0)
+                # X: debug — multiply money by 10
+                if not _WEB and is_key_pressed(KEY_X):
+                    sim.store.money = max(sim.store.money * 10, 10.0)
+
+                # Y: debug — multiply exotic particles by 10
+                if not _WEB and is_key_pressed(KEY_Y):
+                    sim.store.exotic_particles = max(sim.store.exotic_particles * 10, 10.0)
 
             # ── Mouse state ──────────────────────────────────────────
             mouse = get_mouse_position()
             mx = mouse.x if hasattr(mouse, "x") else mouse[0]
             my = mouse.y if hasattr(mouse, "y") else mouse[1]
+            real_mx, real_my = mx, my
+            if input_blocked:
+                mx, my = -100000.0, -100000.0  # nothing hovers or clicks while blocked
 
             # ── Scroll / pan input (before grid clicks) ────────────────
+            # Subspace Expansion (upgrade 50) unlocks CTRL + wheel zoom between
+            # the normal cell size and fitting the whole grid in the viewport.
+            subspace = _subspace_unlocked(sim)
+            if sim.grid is not None and not subspace and sim.grid.zoomed:
+                sim.grid.reset_zoom()
             scrollbar_consumed = False
-            if sim.view_mode == "reactor" and sim.grid is not None:
+            if sim.view_mode == "reactor" and sim.grid is not None and not input_blocked:
                 wheel = get_mouse_wheel_move()
+                zoom_wheel = _take_zoom_wheel(wheel)
+                if zoom_wheel or _ctrl_held():
+                    if subspace and zoom_wheel:
+                        sim.grid.zoom_by(zoom_wheel, mx, my)
+                    wheel = 0.0  # Ctrl+wheel never scrolls
                 middle_down = is_mouse_button_down(MOUSE_BUTTON_MIDDLE)
                 scrollbar_consumed = sim.grid.handle_scrollbar_drag(
                     mx, my,
@@ -383,6 +589,8 @@ async def main() -> None:
                     is_mouse_button_down(MOUSE_BUTTON_LEFT)
                     and not scrollbar_consumed
                     and sim.selected_component_index == -1
+                    and not ui.blueprint_placing
+                    and not ui.blueprint_selecting
                     and g.needs_scroll
                     and in_grid
                 )
@@ -391,6 +599,8 @@ async def main() -> None:
                     middle_down=middle_down or left_pan,
                     wheel_move=wheel,
                 )
+            _web_zoom_wheel[0] = 0.0  # drop any Ctrl+wheel input not used this frame
+            _web_ctrl_wheel_seen[0] = False
 
             # ── Button: Vent Heat ─────────────────────────────────────
             bw, bh = btn_big.width, btn_big.height
@@ -486,6 +696,7 @@ async def main() -> None:
                 and sim.grid is not None
                 and is_mouse_button_down(MOUSE_BUTTON_LEFT)
                 and not scrollbar_consumed
+                and not input_blocked
             ):
                 if 0 <= mx < layout.window_width and 0 <= my < layout.window_height:
                     cell = sim.grid.screen_to_cell(int(mx), int(my))
@@ -493,6 +704,13 @@ async def main() -> None:
                     cell = sim.grid.screen_to_cell_unbounded(int(mx), int(my))
                 if cell is not None:
                     cx, cy = cell
+                    if ui.blueprint_placing:
+                        # Click stamps once; holding the button keeps stamping
+                        # (drag to paint) unless SHIFT is held, since SHIFT
+                        # force-sells and must not repeat every frame.
+                        bp_pressed = is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+                        if bp_pressed or not is_key_down(KEY_SHIFT):
+                            ui.place_blueprint_at(sim, cx, cy, quiet=not bp_pressed)
                     selected = sim.selected_component()
                     if selected is not None:
                         existing = sim.grid.get(cx, cy, 0)
@@ -541,10 +759,15 @@ async def main() -> None:
             #   1. Mouse NOT over grid cell + RMB down → deselect (line 388001)
             #   2. Mouse over empty grid cell + RMB down → deselect (line 388094)
             #   Mouse over occupied grid cell + RMB held → sell (line 388084)
+            # Right-click while placing/selecting a blueprint cancels it; selling
+            # stays off until the right button is released and pressed again.
+            rmb_blocked = input_blocked or ui.blueprint_blocks_right_click()
+
             if (
                 view_mode_before_input == "reactor"
                 and sim.view_mode == "reactor"
                 and sim.grid is not None
+                and not rmb_blocked
                 and is_mouse_button_down(MOUSE_BUTTON_RIGHT)
             ):
                 if 0 <= mx < layout.window_width and 0 <= my < layout.window_height:
@@ -611,11 +834,34 @@ async def main() -> None:
                 0.0,
                 Color(255, 255, 255, 255),
             )
+            # Repeat the panel's right-most column 1px further right, underneath
+            # the info-box area and grid frame (drawn later), so no hairline of
+            # background shows between the left and right parts when scaled.
+            _panel_col_w = layout.left_panel_w / max(1, side_grid.width)
+            draw_texture_pro(
+                side_grid,
+                Rectangle(side_grid.width - 1, 0, 1, side_grid.height),
+                Rectangle(
+                    layout.left_panel_x + layout.left_panel_w - _panel_col_w,
+                    layout.left_panel_y,
+                    _panel_col_w + 1,
+                    layout.left_panel_h,
+                ),
+                Vector2(0, 0),
+                0.0,
+                Color(255, 255, 255, 255),
+            )
 
             frame_x = layout.grid_frame_x
             frame_y = layout.grid_frame_y
             backer_x = frame_x + layout.grid_backer_offset_x
             backer_y = frame_y + layout.grid_backer_offset_y
+            # Zoomed out past the viewport: pull the frame's borders in to the tiles
+            # (the background behind the grid is drawn as-is)
+            if sim.view_mode == "reactor" and sim.grid is not None:
+                frame_insets = sim.grid.content_insets()
+            else:
+                frame_insets = (0, 0, 0, 0)
 
             if sim.view_mode == "upgrades" or sim.view_mode == "prestige":
                 draw_texture_pro(
@@ -649,7 +895,7 @@ async def main() -> None:
                     )
 
                 if sim.grid is not None:
-                    cell_sz = sim.grid.cell_size
+                    cell_sz = int(round(sim.grid.view_cell_size))
                     bar_h = max(2, cell_sz // 10)
                     bar_margin = 2
                     bar_w = cell_sz - bar_margin * 2
@@ -754,7 +1000,7 @@ async def main() -> None:
 
                 # Draw explosion animations on top of grid cells
                 if sim.grid is not None:
-                    cell_sz = sim.grid.cell_size
+                    cell_sz = int(round(sim.grid.view_cell_size))
                     for effect in sim.explosions:
                         if 0 <= effect.frame < 12:
                             ex_tex = explosion_textures[effect.frame]
@@ -772,6 +1018,8 @@ async def main() -> None:
                                 0.0,
                                 Color(255, 255, 255, 255),
                             )
+
+                ui.draw_blueprint_ghost(sim, mx, my)
 
                 if use_scissor:
                     end_scissor_mode()
@@ -792,16 +1040,9 @@ async def main() -> None:
                                       mouse_released=is_mouse_button_released(MOUSE_BUTTON_LEFT),
                                       dt=dt)
             elif sim.view_mode == "help":
-                ui.draw_help_panel(sim, layout, wheel_move=get_mouse_wheel_move(), mouse_x=mx, mouse_y=my, mouse_down=is_mouse_button_down(MOUSE_BUTTON_LEFT))
+                ui.draw_help_panel(sim, layout, wheel_move=0.0 if input_blocked else get_mouse_wheel_move(), mouse_x=mx, mouse_y=my, mouse_down=is_mouse_button_down(MOUSE_BUTTON_LEFT))
 
-            draw_texture_pro(
-                grid_frame,
-                Rectangle(0, 0, grid_frame.width, grid_frame.height),
-                Rectangle(frame_x, frame_y, grid_frame.width, grid_frame.height),
-                Vector2(0, 0),
-                0.0,
-                Color(255, 255, 255, 255),
-            )
+            _draw_game_frame(grid_frame, frame_x, frame_y, sim.grid, frame_insets)
 
             # Scrollbars drawn on top of grid frame so they're visible
             if sim.view_mode == "reactor" and sim.grid is not None:
@@ -868,6 +1109,12 @@ async def main() -> None:
                 mouse_y=my,
                 mouse_pressed=is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
             )
+
+            # A blueprint was saved or deleted: write the game save now so it
+            # persists immediately (blueprints are stored in the save).
+            if getattr(sim, "blueprints_dirty", False):
+                sim.blueprints_dirty = False
+                save_game(sim, save_path)
 
             # Store icon overlay (draw after slots so icons sit on top)
             shop_components = sim.shop_components_for_page()
@@ -947,8 +1194,11 @@ async def main() -> None:
                 Color(255, 255, 255, 255),
             )
 
+            # Enlarged blueprint view, on top of everything
+            ui.draw_blueprint_preview(sim, layout)
+
             end_drawing()
-            prev_mx, prev_my = mx, my
+            prev_mx, prev_my = real_mx, real_my
 
             # Periodic auto-save (web: no reliable finally; native: also nice to have)
             if _WEB:

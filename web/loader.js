@@ -105,6 +105,7 @@
         'game/layout.py',
         'game/grid.py',
         'game/save.py',
+        'game/blueprints.py',
         'game/ui.py',
     ];
 

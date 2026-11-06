@@ -5,6 +5,12 @@ Export Old: Reactor Idle-compatible encrypted text (AES-256-CBC via
 .NET PasswordDeriveBytes-compatible key derivation), bounded to legacy schema.
 Export New: base64-JSON with full reimplementation state (no legacy bounds).
 Import: supports raw JSON, base64-JSON, and original encrypted format.
+
+Reactor blueprints (sim.blueprints) belong to the save: they are stored in the
+auto-save and the new export under "blueprints", and loading or importing any
+save sets them to exactly that save's list. Saves without the key (older
+versions of this game, the original Reactor Idle format) load as before, with
+no blueprints.
 """
 from __future__ import annotations
 
@@ -52,6 +58,37 @@ _ORIG_COMPONENT_ORDER = (
 )
 _ORIG_INDEX_TO_NAME = {idx: name for idx, name in enumerate(_ORIG_COMPONENT_ORDER)}
 _ORIG_NAME_TO_INDEX = {name: idx for idx, name in _ORIG_INDEX_TO_NAME.items()}
+
+
+# ── Reactor blueprints ────────────────────────────────────────────────
+# A blueprint is {"name": str, "cells": [[x, y, component_name], ...]}.
+_BLUEPRINTS_KEY = "blueprints"
+_BLUEPRINT_NAME_MAX = 64
+
+
+def _sanitize_blueprints(value) -> list[dict]:
+    """Return a clean, JSON-safe copy of a blueprint list. Anything malformed
+    (wrong types, bad cells, empty designs) is dropped rather than failing."""
+    out: list[dict] = []
+    if not isinstance(value, list):
+        return out
+    for bp in value:
+        if not isinstance(bp, dict) or not isinstance(bp.get("cells"), list):
+            continue
+        cells: list[list] = []
+        for entry in bp["cells"]:
+            try:
+                x, y, name = int(entry[0]), int(entry[1]), str(entry[2])
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+            if name:
+                cells.append([x, y, name])
+        if not cells:
+            continue
+        name = bp.get("name")
+        name = str(name)[:_BLUEPRINT_NAME_MAX] if name else f"Design {len(out) + 1}"
+        out.append({"name": name, "cells": cells})
+    return out
 
 
 def _ms_password_derive_bytes(password: bytes, salt: bytes,
@@ -598,6 +635,7 @@ def _build_save_dict(sim: Simulation) -> dict:
         "shop_page": sim.shop_page,
         "selected_component_index": sim.selected_component_index,
         "components": components,
+        _BLUEPRINTS_KEY: _sanitize_blueprints(getattr(sim, "blueprints", None)),
     }
 
 
@@ -619,6 +657,13 @@ def _restore_from_dict(sim: Simulation, data: dict) -> bool:
         sim.store.heat_dissipated_this_game = float(store_data.get("heat_dissipated_this_game", 0.0))
         sim.store.exotic_particles = float(store_data.get("exotic_particles", 0.0))
         sim.store.total_exotic_particles = float(store_data.get("total_exotic_particles", 0.0))
+
+        # 1b. Restore blueprints. They belong to the save: a save without any
+        #     (older saves, the original game format) leaves you with none.
+        try:
+            sim.blueprints = _sanitize_blueprints(data.get(_BLUEPRINTS_KEY))
+        except AttributeError:
+            pass
 
         # 2. Restore upgrade levels
         upgrade_levels = data.get("upgrade_levels", [])
