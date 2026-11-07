@@ -155,6 +155,7 @@ else:
     # without an intermediate copy.  extend() with tuples is efficient.
     _cmds: array.array = array.array('d')
     _strings: list[str] = []
+    _string_indices: dict[str, int] = {}
 
     # ── Input state (polled once per frame from JS) ──────────────────
     _input_state: dict = {}
@@ -252,6 +253,7 @@ else:
         global _prev_input_state, _input_state, _frame_time
         del _cmds[:]  # Clear in-place; array keeps its allocated buffer
         _strings.clear()
+        _string_indices.clear()
         _prev_input_state = _input_state
         if _js_poll_input is not None:
             raw = _js_poll_input()
@@ -292,8 +294,12 @@ else:
     # ── Text ─────────────────────────────────────────────────────────
 
     def draw_text(text: str, x: int, y: int, size: int, color: tuple, light=False) -> None:
-        str_idx = len(_strings)
-        _strings.append(str(text))
+        value = str(text)
+        str_idx = _string_indices.get(value)
+        if str_idx is None:
+            str_idx = len(_strings)
+            _strings.append(value)
+            _string_indices[value] = str_idx
         opcode = OP_DRAW_TEXT_LIGHT if light else OP_DRAW_TEXT
         _cmds.extend((opcode, float(str_idx), float(x), float(y), float(size),
                        color[0], color[1], color[2], color[3]))
@@ -401,3 +407,15 @@ else:
             return None
         val = _input_state['fileImport']
         return str(val) if val is not None else None
+
+    def get_inactive_time() -> float:
+        """Consume wall time accumulated while the browser document was hidden."""
+        try:
+            from js import Input as _web_input  # type: ignore
+            return float(_web_input.consumeInactiveSeconds())
+        except Exception:
+            return 0.0
+
+    def is_save_requested() -> bool:
+        """Return whether the browser requested a lifecycle-safe save this frame."""
+        return bool(_input_state.get('saveRequested', False))

@@ -42,6 +42,7 @@
                 referrerpolicy="same-origin"
             ></iframe>
             <p id="watchdog-status" class="game-watchdog-status" aria-live="polite"></p>
+            <p id="save-status" class="game-save-status" aria-live="polite">Save: waiting for game…</p>
             <p class="game-attribution">
                 Original game created by
                 <a href="https://www.kongregate.com/en/games/cael/reactor-incremental" target="_blank" rel="noopener">cael</a>.
@@ -145,21 +146,81 @@
             const frame = document.getElementById('game-frame');
             const themeBtn = document.getElementById('theme-toggle');
             const statusEl = document.getElementById('watchdog-status');
+            const saveStatusEl = document.getElementById('save-status');
             const SAVE_KEY = 'rev_reactor_save';
+            const SAVE_BACKUP_KEY = 'rev_reactor_save_backup';
+            const SAVE_WRITER_KEY = 'rev_reactor_save_writer';
 
             const CHECK_EVERY_MS = 1000;
-            const HEARTBEAT_TIMEOUT_MS = 6000;
-            const FIRST_BEAT_GRACE_MS = 20000;
+            const HEARTBEAT_TIMEOUT_MS = 12000;
+            const FIRST_BEAT_GRACE_MS = 60000;
+            const RESUME_GRACE_MS = 60000;
 
-            let currentTheme = localStorage.getItem('sprite-theme') === 'decayed' ? 'decayed' : 'default';
+            function createBridgeToken() {
+                if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+                    const values = new Uint32Array(4);
+                    crypto.getRandomValues(values);
+                    return Array.from(values, value => value.toString(36)).join('-');
+                }
+                return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+            }
+
+            const BRIDGE_TOKEN = createBridgeToken();
+
+            let inMemorySaveText = null;
+
+            function readLocalStorage(key) {
+                try {
+                    return localStorage.getItem(key);
+                } catch (err) {
+                    console.warn(`Storage read failed for ${key}:`, err);
+                    return null;
+                }
+            }
+
+            function writeLocalStorage(key, value) {
+                try {
+                    localStorage.setItem(key, value);
+                    return true;
+                } catch (err) {
+                    console.warn(`Storage write failed for ${key}:`, err);
+                    return false;
+                }
+            }
+
+            function claimSaveWriter() {
+                return writeLocalStorage(SAVE_WRITER_KEY, BRIDGE_TOKEN);
+            }
+
+            function canWriteSave() {
+                const owner = readLocalStorage(SAVE_WRITER_KEY);
+                if (owner === BRIDGE_TOKEN) return true;
+                if (owner === null) {
+                    // Either no owner exists or storage is unavailable. Claim
+                    // when possible; otherwise retain the in-memory fallback.
+                    claimSaveWriter();
+                    return true;
+                }
+                return false;
+            }
+
+            let currentTheme = readLocalStorage('sprite-theme') === 'decayed' ? 'decayed' : 'default';
             let lastBeat = Date.now();
             let frameLoadAt = Date.now();
             let hasBeat = false;
             let restartCount = 0;
+            let watchdogGraceUntil = frameLoadAt + FIRST_BEAT_GRACE_MS;
+            let heartbeatProbeAt = 0;
 
             function setStatus(message) {
                 if (!statusEl) return;
                 statusEl.textContent = message;
+            }
+
+            function setSaveStatus(message, isError = false) {
+                if (!saveStatusEl) return;
+                saveStatusEl.textContent = message;
+                saveStatusEl.classList.toggle('save-error', isError);
             }
 
             function applyThemeButton() {
@@ -177,20 +238,55 @@
             }
 
             function readSavedGame() {
-                try {
-                    return localStorage.getItem(SAVE_KEY);
-                } catch (_err) {
-                    return null;
+                const candidates = [
+                    readLocalStorage(SAVE_KEY),
+                    readLocalStorage(SAVE_BACKUP_KEY),
+                    inMemorySaveText,
+                ];
+                let newest = null;
+                let newestTimestamp = -1;
+                let newestTicks = -1;
+                for (const text of candidates) {
+                    if (typeof text !== 'string') continue;
+                    try {
+                        const parsed = JSON.parse(text);
+                        const timestamp = Number(parsed.saved_at_unix_ms) || 0;
+                        const ticks = Number(parsed.total_ticks) || 0;
+                        if (timestamp > newestTimestamp
+                                || (timestamp === newestTimestamp && ticks > newestTicks)) {
+                            newest = text;
+                            newestTimestamp = timestamp;
+                            newestTicks = ticks;
+                        }
+                    } catch (_err) {
+                        // Ignore corrupt candidates and use another snapshot.
+                    }
                 }
+                if (newest !== null) {
+                    inMemorySaveText = newest;
+                }
+                return newest;
             }
 
             function writeSavedGame(saveText) {
-                if (typeof saveText !== 'string') return;
-                try {
-                    localStorage.setItem(SAVE_KEY, saveText);
-                } catch (err) {
-                    console.warn('Failed to write save data from iframe:', err);
+                if (typeof saveText !== 'string') {
+                    return { accepted: false, durable: false };
                 }
+                try {
+                    JSON.parse(saveText);
+                } catch (_err) {
+                    return { accepted: false, durable: false };
+                }
+                if (!canWriteSave()) {
+                    return { accepted: false, durable: false };
+                }
+                inMemorySaveText = saveText;
+                const backupWritten = writeLocalStorage(SAVE_BACKUP_KEY, saveText);
+                const primaryWritten = writeLocalStorage(SAVE_KEY, saveText);
+                return {
+                    accepted: true,
+                    durable: backupWritten || primaryWritten,
+                };
             }
 
             function triggerDownload(filename, text) {
@@ -214,6 +310,7 @@
                 frame.contentWindow.postMessage(
                     {
                         type: 'rev-reactor-host-state',
+                        bridgeToken: BRIDGE_TOKEN,
                         theme: currentTheme,
                         saveText: readSavedGame(),
                     },
@@ -221,9 +318,17 @@
                 );
             }
 
+            function requestHeartbeat() {
+                if (!frame.contentWindow) return;
+                frame.contentWindow.postMessage(
+                    { type: 'rev-reactor-heartbeat-request' },
+                    '*'
+                );
+            }
+
             function setTheme(theme) {
                 currentTheme = theme === 'decayed' ? 'decayed' : 'default';
-                localStorage.setItem('sprite-theme', currentTheme);
+                writeLocalStorage('sprite-theme', currentTheme);
                 applyThemeButton();
                 postThemeToGame();
             }
@@ -238,29 +343,60 @@
                 hasBeat = false;
                 frameLoadAt = Date.now();
                 lastBeat = frameLoadAt;
+                watchdogGraceUntil = frameLoadAt + FIRST_BEAT_GRACE_MS;
+                heartbeatProbeAt = 0;
                 setStatus(`Game restarted (${reason}). Count: ${restartCount}`);
             }
 
             window.addEventListener('message', (ev) => {
-                if (ev.source !== frame.contentWindow) return;
                 const data = ev.data;
                 if (!data || typeof data !== 'object') return;
+
+                // Initial requests do not have a token yet. Always reply to
+                // the known game iframe rather than exposing state to sender.
+                if (data.type === 'rev-reactor-host-state-request') {
+                    postHostStateToGame();
+                    return;
+                }
+
+                // Safari can wrap sandboxed WindowProxy objects differently;
+                // authenticate all post-handshake messages with a random token
+                // instead of relying solely on strict proxy identity.
+                if (data.bridgeToken !== BRIDGE_TOKEN) return;
                 if (data.type === 'rev-reactor-beat') {
                     lastBeat = Date.now();
                     hasBeat = true;
+                    heartbeatProbeAt = 0;
                     if (statusEl && statusEl.textContent) {
                         setStatus('');
                     }
                     return;
                 }
 
-                if (data.type === 'rev-reactor-host-state-request') {
-                    postHostStateToGame();
-                    return;
-                }
-
                 if (data.type === 'rev-reactor-save-write') {
-                    writeSavedGame(data.saveText);
+                    const result = writeSavedGame(data.saveText);
+                    const savedAt = Date.now();
+                    if (!result.accepted) {
+                        setSaveStatus('Save handled by another active game tab.');
+                    } else if (result.durable) {
+                        setSaveStatus(`Saved locally at ${new Date(savedAt).toLocaleTimeString()}`);
+                    } else {
+                        setSaveStatus(
+                            'Save is only in memory — Safari is blocking persistent site storage.',
+                            true
+                        );
+                    }
+                    frame.contentWindow.postMessage(
+                        {
+                            type: 'rev-reactor-save-ack',
+                            bridgeToken: BRIDGE_TOKEN,
+                            writeId: data.writeId,
+                            accepted: result.accepted,
+                            durable: result.durable,
+                            savedAt,
+                        },
+                        '*'
+                    );
                     return;
                 }
 
@@ -277,9 +413,24 @@
                 frameLoadAt = Date.now();
                 lastBeat = frameLoadAt;
                 hasBeat = false;
+                watchdogGraceUntil = frameLoadAt + FIRST_BEAT_GRACE_MS;
+                heartbeatProbeAt = 0;
                 postHostStateToGame();
                 postThemeToGame();
             });
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) return;
+                claimSaveWriter();
+                // Hidden-page timers are throttled. Give the healthy iframe a
+                // chance to answer before treating a stale heartbeat as a hang.
+                const now = Date.now();
+                lastBeat = now;
+                watchdogGraceUntil = now + RESUME_GRACE_MS;
+                heartbeatProbeAt = 0;
+                requestHeartbeat();
+            });
+            window.addEventListener('focus', claimSaveWriter);
 
             if (themeBtn) {
                 themeBtn.addEventListener('click', () => {
@@ -291,6 +442,7 @@
                 if (document.hidden) return;
 
                 const now = Date.now();
+                if (now < watchdogGraceUntil) return;
                 if (!hasBeat) {
                     if (now - frameLoadAt > FIRST_BEAT_GRACE_MS) {
                         restartFrame('no heartbeat during startup');
@@ -299,11 +451,19 @@
                 }
 
                 if (now - lastBeat > HEARTBEAT_TIMEOUT_MS) {
-                    restartFrame('heartbeat timeout');
+                    if (heartbeatProbeAt === 0) {
+                        heartbeatProbeAt = now;
+                        requestHeartbeat();
+                        return;
+                    }
+                    if (now - heartbeatProbeAt > 5000) {
+                        restartFrame('heartbeat timeout');
+                    }
                 }
             }, CHECK_EVERY_MS);
 
             applyThemeButton();
+            if (!document.hidden) claimSaveWriter();
             postThemeToGame();
         })();
     </script>

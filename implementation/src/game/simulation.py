@@ -11,6 +11,10 @@ from game.types import ComponentTypeStats
 from game.upgrades import UpgradeManager, StatCategory
 
 
+MAX_CATCH_UP_SECONDS = 4.0 * 60.0 * 60.0
+MAX_CATCH_UP_TICKS = 10_000
+
+
 def _fuel_index(name: str) -> Optional[int]:
     match = re.match(r"Fuel(\d+)", name)
     if not match:
@@ -82,6 +86,88 @@ class ExplosionEffect:
     fps: float = 16.0  # 12 frames at 16fps ≈ 0.75s
 
 
+class _TickLayout:
+    """What the tick needs from the reactor layout, worked out once per
+    layout instead of every tick: which parts are exchangers, vents, hull
+    links and fuel cells, and each one's (non-empty) neighbours, kept in the
+    exact order the tick processes them. Only static facts are baked in
+    (part types, which neighbours exist, which can absorb or lose heat);
+    anything that changes during play (depletion, heat, upgrades) is still
+    checked every tick."""
+
+    __slots__ = ("grid", "width", "height", "count", "drain", "fuels", "exchangers",
+                 "vents", "outlets", "hull", "coolant6", "capacitor6",
+                 "exchange_plan", "exchange_plan_revision")
+
+    def __init__(self, sim: "Simulation") -> None:
+        grid = sim.grid
+        get = grid.get
+        self.grid = grid
+        self.width = grid.width
+        self.height = grid.height
+        self.count = len(sim.components)
+        self.exchange_plan = None  # built by Simulation._exchange_plan per upgrade revision
+        self.exchange_plan_revision = -1
+
+        def present_neighbors(x: int, y: int, z: int) -> list:
+            out = []
+            for nx, ny, nz in grid.neighbors(x, y, z):
+                ncomp = get(nx, ny, nz)
+                if ncomp is not None:
+                    out.append(ncomp)
+            return out
+
+        # Grid order (row-major): durability drain and heat exchange are
+        # sequential, so their order is gameplay-significant.
+        self.drain = []        # (comp, is_fuel, neighbours if reflector else None)
+        self.exchangers = []   # (comp, neighbours that can lose heat)
+        for x, y, z, comp in grid.iter_cells():
+            if comp is None:
+                continue
+            st = comp.stats
+            nbrs = present_neighbors(x, y, z)
+            is_fuel = st.pulses_produced > 0 and st.max_durability > 0
+            is_reflector = st.reflects_pulses > 0 and st.max_durability > 0
+            if is_fuel or is_reflector:
+                self.drain.append((comp, is_fuel, nbrs if is_reflector else None))
+            if st.type_of_component == "Exchanger" and st.self_vent_rate > 0:
+                self.exchangers.append((comp, [n for n in nbrs if not n.stats.cant_lose_heat]))
+
+        # Component order (placement order), as the tick's other loops use.
+        self.fuels = []        # (comp, reflector neighbours, heat-absorbing neighbours)
+        self.vents = []
+        self.outlets = []      # (comp, heat-absorbing neighbours)
+        self.hull = []         # (comp, is_inlet, neighbours: inlet = can lose heat, outlet = absorbing)
+        self.coolant6 = []
+        self.capacitor6 = []
+        for comp in sim.components:
+            st = comp.stats
+            kind = st.type_of_component
+            if st.energy_per_pulse > 0 or st.reactor_vent_rate > 0:
+                nbrs = present_neighbors(comp.grid_x, comp.grid_y, comp.grid_z if st.energy_per_pulse > 0 else 0)
+            if st.energy_per_pulse > 0:
+                self.fuels.append((
+                    comp,
+                    [n for n in nbrs if n.stats.reflects_pulses > 0],
+                    [n for n in nbrs if n.stats.heat_capacity > 0],
+                ))
+            if st.self_vent_rate > 0 and kind not in ("Exchanger", "Inlet", "Outlet"):
+                self.vents.append(comp)
+            if st.reactor_vent_rate > 0:
+                absorbers = [n for n in nbrs if n.stats.heat_capacity > 0]
+                if kind == "Outlet":
+                    self.outlets.append((comp, absorbers))
+                    self.hull.append((comp, False, absorbers))
+                elif kind == "Inlet":
+                    self.hull.append((comp, True, [n for n in nbrs if not n.stats.cant_lose_heat]))
+                else:
+                    self.hull.append((comp, None, None))
+            if kind == "Coolant" and st.name == "Coolant6":
+                self.coolant6.append(comp)
+            if kind == "Capacitor" and st.name == "Capacitor6":
+                self.capacitor6.append(comp)
+
+
 @dataclass
 class Simulation:
     """Reactor simulation matching the decoded WASM tick pipeline.
@@ -151,6 +237,26 @@ class Simulation:
 
     # Dirty flag for pulse recalculation
     _pulses_dirty: bool = True
+    _preview_dirty: bool = True
+    _preview_upgrade_revision: int = -1
+    _multipliers_dirty: bool = True
+    _multiplier_upgrade_revision: int = -1
+    _shop_cache_key: tuple[int, int, int] | None = field(default=None, repr=False)
+    # Per-layout lists the tick walks instead of the whole grid (see
+    # _tick_layout); rebuilt whenever the layout changes.
+    _layout_cache: Optional["_TickLayout"] = field(default=None, repr=False)
+    # Upgrade bonuses looked up during ticks, cleared when upgrades change.
+    _bonus_table: dict = field(default_factory=dict, repr=False)
+    _bonus_table_revision: int = field(default=-1, repr=False)
+    _shop_cache_components: List[ComponentTypeStats] = field(default_factory=list, repr=False)
+
+    # Most recent wall-clock catch-up, exposed for diagnostics/UI without
+    # affecting serialized gameplay state.
+    last_catch_up_seconds: float = 0.0
+    last_catch_up_ticks: int = 0
+    # Time since the save, set when a save is loaded; main.py runs it through
+    # catch_up() on the next frame, after showing the waiting overlay.
+    pending_catch_up_seconds: float = 0.0
 
     # Tick timing — from unnamed_function_10418 (Simulation.LogicalUpdate):
     #   while (Time.time - lastTick > 1.0 / ticksPerSecond):
@@ -169,6 +275,30 @@ class Simulation:
     prestige_confirming: bool = False   # Phase B: awaiting second click
     prestige_can_refund: bool = False   # Phase C: post-prestige refund window
 
+    def _tick_layout(self) -> "_TickLayout":
+        cache = self._layout_cache
+        grid = self.grid
+        if (cache is None or cache.grid is not grid or cache.width != grid.width
+                or cache.height != grid.height or cache.count != len(self.components)):
+            cache = self._layout_cache = _TickLayout(self)
+        return cache
+
+    def _bonuses(self) -> dict:
+        """(type_id, stat) -> upgrade bonus, for this upgrade revision. Same
+        values as _stat_mult, without its per-call overhead in hot loops."""
+        revision = self.upgrade_manager.revision
+        if self._bonus_table_revision != revision:
+            self._bonus_table = {}
+            self._bonus_table_revision = revision
+        return self._bonus_table
+
+    def _bonus(self, table: dict, type_id: int, stat: int) -> float:
+        key = (type_id, stat)
+        value = table.get(key)
+        if value is None:
+            value = table[key] = self.upgrade_manager.get_upgrade_stat_bonus(type_id, stat)
+        return value
+
     def _stat_mult(self, type_id: int, stat: int) -> float:
         """Return upgrade multiplier for a (component_type_id, stat_category) pair.
 
@@ -185,6 +315,54 @@ class Simulation:
             self._tick_accumulator -= tick_interval
             self._do_tick()
 
+    def catch_up(self, elapsed_seconds: float) -> int:
+        """Advance missed wall time with bounded, deterministic simulation ticks.
+
+        Browsers can suspend hidden tabs indefinitely. Catch-up is capped by
+        both elapsed time and tick count so reopening cannot lock the UI for an
+        unbounded period.
+        """
+        for _ in self.iter_catch_up(elapsed_seconds):
+            pass
+        return self.last_catch_up_ticks
+
+    def iter_catch_up(self, elapsed_seconds: float):
+        """catch_up() a tick at a time: yields (ticks_done, ticks_total) after
+        each tick so the caller can give the browser a turn between ticks
+        (main.py does, so the page keeps its heartbeat during a long
+        catch-up). Running it to the end is exactly catch_up(); stopping early
+        drops the ticks not run."""
+        self.last_catch_up_seconds = 0.0
+        self.last_catch_up_ticks = 0
+        if self.paused or elapsed_seconds <= 0.0:
+            return
+
+        elapsed = min(float(elapsed_seconds), MAX_CATCH_UP_SECONDS)
+        self.upgrade_manager.prepare_multipliers(self)
+        tick_interval = 1.0 / self.ticks_per_second if self.ticks_per_second > 0 else 1.0
+        available = self._tick_accumulator + elapsed
+        ticks = min(int(available / tick_interval), MAX_CATCH_UP_TICKS)
+        if ticks <= 0:
+            self._tick_accumulator = available
+            return
+
+        done = 0
+        try:
+            while done < ticks:
+                self._do_tick()
+                done += 1
+                yield done, ticks
+        finally:
+            # Stopped early: the ticks not run are dropped (not left in the
+            # accumulator, where step() would run them all in one burst).
+            self._tick_accumulator = max(0.0, available - ticks * tick_interval)
+            # Discard time beyond the safety cap instead of causing repeated bursts.
+            if ticks == MAX_CATCH_UP_TICKS:
+                self._tick_accumulator %= tick_interval
+            consumed = done * tick_interval
+            self.last_catch_up_seconds = min(elapsed, consumed)
+            self.last_catch_up_ticks = done
+
     def _do_tick(self) -> None:
         """Execute one simulation tick following the decoded pipeline."""
         self.reactor_heat = max(0.0, self.reactor_heat)
@@ -197,22 +375,20 @@ class Simulation:
 
         # Step 1: PrepareMultipliers
         self.upgrade_manager.prepare_multipliers(self)
-        self.preview_vent_capacity = self.vent_dissipation_capacity_per_tick()
-        self.preview_outlet_capacity = self.outlet_transfer_capacity_per_tick()
-        self.preview_active_dissipation = self.active_dissipation_capacity_per_tick()
 
         # Step 2: DistributePulses (recalc when layout changes)
         if self._pulses_dirty:
+            self._layout_cache = None  # layout (or depletion) changed
             self._distribute_pulses()
             self._pulses_dirty = False
 
-        # Step 3: DrainDurability
-        self._drain_durability()
-
-        # Step 4: GeneratePowerAndHeat
+        # Step 3: GeneratePowerAndHeat
         power_gen, heat_gen = self._generate_power_and_heat()
         self.last_power_change += power_gen
         self.last_heat_change += heat_gen
+
+        # Step 4: DrainDurability
+        self._drain_durability()
 
         # Step 5: HeatExchange (simplified — exchange between neighbors toward equilibrium)
         self._heat_exchange()
@@ -268,10 +444,8 @@ class Simulation:
                 1, StatCategory.AUTO_SELL_RATE) - 1.0
             if auto_sell_mult > 0:
                 sell_ratio = sold / auto_sell if auto_sell > 0 else 0.0
-                for comp in self.components:
-                    if (comp.stats.type_of_component == "Capacitor"
-                            and comp.stats.name == "Capacitor6"
-                            and not comp.depleted):
+                for comp in self._tick_layout().capacitor6:
+                    if not comp.depleted:
                         # stat 12 = ReactorPowerCapacityIncrease with upgrade bonus
                         power_cap_inc = comp.stats.reactor_power_capacity_increase * self._stat_mult(
                             comp.stats.component_type_id, StatCategory.REACTOR_POWER_CAP_INCREASE)
@@ -289,6 +463,7 @@ class Simulation:
         # Update resource store for UI
         self.store.power = self.stored_power
         self.store.heat = self.reactor_heat
+        self._preview_dirty = True
 
     def _distribute_pulses(self) -> None:
         """RE: unnamed_function_10441 — distribute pulses to self and cardinal neighbors.
@@ -308,11 +483,13 @@ class Simulation:
         for comp in self.components:
             comp.pulse_count = 0
 
-        for x, y, z, comp in self.grid.iter_cells():
-            if comp is None or comp.depleted:
+        for comp in self.components:
+            if comp.depleted:
                 continue
             if comp.stats.pulses_produced <= 0:
                 continue  # not a fuel cell
+
+            x, y, z = comp.grid_x, comp.grid_y, comp.grid_z
 
             pulses = int(comp.stats.pulses_produced)
             cores = comp.stats.number_of_cores
@@ -347,12 +524,14 @@ class Simulation:
         """Fuel cells lose 1 durability/tick. Reflectors lose neighbor pulse sum."""
         if self.grid is None:
             return
-        for x, y, z, comp in self.grid.iter_cells():
-            if comp is None or comp.depleted:
+        # Preserve the binary's grid-order processing: a fuel cell can become
+        # depleted before a later reflector inspects its neighbors.
+        for comp, is_fuel, reflector_nbrs in self._tick_layout().drain:
+            if comp.depleted:
                 continue
 
             # Fuel cells: lose 1 durability per tick
-            if comp.stats.pulses_produced > 0 and comp.stats.max_durability > 0:
+            if is_fuel:
                 comp.durability -= 1.0
                 if comp.durability <= 0:
                     # RE: Protium (type 0x10/16) — increment permanent depletion counter
@@ -366,13 +545,13 @@ class Simulation:
                     else:
                         comp.depleted = True
                     self._pulses_dirty = True
+                    self._multipliers_dirty = True
 
             # Reflectors: lose durability = sum of neighbor PulsesProduced
-            if comp.stats.reflects_pulses > 0 and comp.stats.max_durability > 0:
+            if reflector_nbrs is not None:
                 neighbor_pulse_sum = 0
-                for nx, ny, nz in self.grid.neighbors(x, y, z):
-                    ncomp = self.grid.get(nx, ny, nz)
-                    if ncomp is not None and not ncomp.depleted:
+                for ncomp in reflector_nbrs:
+                    if not ncomp.depleted:
                         neighbor_pulse_sum += int(ncomp.stats.pulses_produced)
                 comp.durability -= neighbor_pulse_sum
                 if comp.durability <= 0:
@@ -404,17 +583,22 @@ class Simulation:
             cell_eff = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.CELL_EFFECTIVENESS)
             overheat_mult = (math.log(self.reactor_heat) / math.log(1000.0)) * (cell_eff - 1.0) * 0.01 + 1.0
 
-        for x, y, z, comp in self.grid.iter_cells():
-            if comp is None or comp.depleted:
+        bonuses = self._bonuses()
+        bonus = self._bonus
+        ENERGY_PER_PULSE = StatCategory.ENERGY_PER_PULSE
+        HEAT_PER_PULSE = StatCategory.HEAT_PER_PULSE
+        REFLECTOR_EFFECTIVENESS = StatCategory.REFLECTOR_EFFECTIVENESS
+
+        for comp, reflector_nbrs, absorbers in self._tick_layout().fuels:
+            if comp.depleted:
                 continue
-            if comp.stats.energy_per_pulse <= 0:
-                continue  # not a fuel cell
+            st = comp.stats
 
             pulse_count = comp.pulse_count
-            tid = comp.stats.component_type_id
+            tid = st.component_type_id
 
             # --- Base power (fn 10446) ---
-            epp = comp.stats.energy_per_pulse * self._stat_mult(tid, StatCategory.ENERGY_PER_PULSE)
+            epp = st.energy_per_pulse * bonus(bonuses, tid, ENERGY_PER_PULSE)
             power = float(pulse_count) * epp
 
             # RE: Protium (type 0x10/16) — permanent depletion bonus
@@ -422,13 +606,13 @@ class Simulation:
                 power *= self.depleted_protium_count / 100.0 + 1.0
 
             # --- Base heat (fn 10444) ---
-            hpp = comp.stats.heat_per_pulse * self._stat_mult(tid, StatCategory.HEAT_PER_PULSE)
-            cell_area = comp.stats.cell_width * comp.stats.cell_height
+            hpp = st.heat_per_pulse * bonus(bonuses, tid, HEAT_PER_PULSE)
+            cell_area = st.cell_width * st.cell_height
             heat = (float(pulse_count * pulse_count) * hpp) / max(1, cell_area)
 
             # --- Kymium (type 0x12/18) — cosine pulsation ---
             if tid == 18:
-                max_dur = comp.stats.max_durability * self._stat_mult(tid, StatCategory.MAX_DURABILITY)
+                max_dur = st.max_durability * self._stat_mult(tid, StatCategory.MAX_DURABILITY)
                 if max_dur > 0:
                     phase = (comp.durability / max_dur) * 8.0 * math.pi
                     cos_val = math.cos(phase)
@@ -437,6 +621,7 @@ class Simulation:
 
             # --- Monastium (type 0x11/17) — 7×7 density penalty (power only) ---
             if tid == 17:
+                x, y, z = comp.grid_x, comp.grid_y, comp.grid_z
                 occupied = 0
                 for dy in range(-3, 4):
                     for dx in range(-3, 4):
@@ -448,16 +633,11 @@ class Simulation:
 
             # --- Cardinal neighbor scan: reflector bonus + absorber count ---
             reflector_mult = 1.0
-            absorber_count = 0
-            for nx, ny, nz in self.grid.neighbors(x, y, z):
-                ncomp = self.grid.get(nx, ny, nz)
-                if ncomp is None:
-                    continue
-                if ncomp.stats.reflects_pulses > 0 and not ncomp.depleted:
-                    ref_bonus = self._stat_mult(ncomp.stats.component_type_id, StatCategory.REFLECTOR_EFFECTIVENESS)
+            for ncomp in reflector_nbrs:
+                if not ncomp.depleted:
+                    ref_bonus = bonus(bonuses, ncomp.stats.component_type_id, REFLECTOR_EFFECTIVENESS)
                     reflector_mult += 0.1 * ref_bonus
-                if ncomp.stats.heat_capacity > 0:
-                    absorber_count += 1
+            absorber_count = len(absorbers)
 
             # Apply multipliers to power (reflector, overheat)
             power *= reflector_mult * overheat_mult
@@ -471,12 +651,8 @@ class Simulation:
             # Heat distribution (lines 391810-391851)
             if absorber_count > 0:
                 heat_per_absorber = heat / absorber_count
-                for nx, ny, nz in self.grid.neighbors(x, y, z):
-                    ncomp = self.grid.get(nx, ny, nz)
-                    if ncomp is None:
-                        continue
-                    if ncomp.stats.heat_capacity > 0:
-                        ncomp.heat += heat_per_absorber
+                for ncomp in absorbers:
+                    ncomp.heat += heat_per_absorber
             else:
                 total_heat_to_reactor += heat
 
@@ -500,11 +676,13 @@ class Simulation:
             cell_eff = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.CELL_EFFECTIVENESS)
             overheat_mult = (math.log(self.reactor_heat) / math.log(1000.0)) * (cell_eff - 1.0) * 0.01 + 1.0
 
-        for x, y, z, comp in self.grid.iter_cells():
-            if comp is None or comp.depleted:
+        for comp in self.components:
+            if comp.depleted:
                 continue
             if comp.stats.energy_per_pulse <= 0:
                 continue
+
+            x, y, z = comp.grid_x, comp.grid_y, comp.grid_z
 
             pulse_count = comp.pulse_count
             tid = comp.stats.component_type_id
@@ -561,6 +739,32 @@ class Simulation:
 
         return total_power, total_heat_to_reactor
 
+    def _exchange_plan(self, layout: "_TickLayout") -> list:
+        """Per exchanger (grid order): its rate before the global multiplier,
+        its effective heat capacity, and (neighbour, effective heat capacity)
+        for the neighbours it can exchange with. Depends only on the layout
+        and upgrade levels, so it's rebuilt when either changes."""
+        bonuses = self._bonuses()
+        bonus = self._bonus
+        ADJACENT_TRANSFER_RATE = StatCategory.ADJACENT_TRANSFER_RATE
+        HEAT_CAPACITY = StatCategory.HEAT_CAPACITY
+        plan = []
+        for comp, nbrs in layout.exchangers:
+            st = comp.stats
+            comp_cap = st.heat_capacity * bonus(bonuses, st.component_type_id, HEAT_CAPACITY)
+            if comp_cap <= 0:
+                continue
+            pairs = []
+            for ncomp in nbrs:
+                nst = ncomp.stats
+                ncap = nst.heat_capacity * bonus(bonuses, nst.component_type_id, HEAT_CAPACITY)
+                if ncap > 0:
+                    pairs.append((ncomp, ncap))
+            # Exchanger's transfer rate = base SelfVentRate × upgrade × global mult
+            base_rate = st.self_vent_rate * bonus(bonuses, st.component_type_id, ADJACENT_TRANSFER_RATE)
+            plan.append((comp, base_rate, comp_cap, pairs))
+        return plan
+
     def _heat_exchange(self) -> None:
         """RE: fn 10424 — Only exchangers drive heat redistribution.
 
@@ -572,44 +776,35 @@ class Simulation:
         """
         if self.grid is None:
             return
-        for x, y, z, comp in self.grid.iter_cells():
-            if comp is None or comp.depleted:
+        layout = self._tick_layout()
+        revision = self.upgrade_manager.revision
+        if layout.exchange_plan is None or layout.exchange_plan_revision != revision:
+            layout.exchange_plan = self._exchange_plan(layout)
+            layout.exchange_plan_revision = revision
+        exchange_mult = self.heat_exchange_mult
+        # Exchange is sequential, so its ordering is gameplay-significant
+        # (the plan keeps exchangers in grid order). The comparisons below are
+        # exactly max(0, min(1, x)), max(-rate, min(rate, delta)) and
+        # abs(transfer) > 0.001, written out because this is the hottest loop.
+        for comp, base_rate, comp_cap, pairs in layout.exchange_plan:
+            if comp.depleted:
                 continue
-            if comp.stats.type_of_component != "Exchanger":
-                continue
-            # Exchanger's transfer rate = base SelfVentRate × upgrade × global mult
-            base_rate = comp.stats.self_vent_rate
-            if base_rate <= 0:
-                continue
-            rate = base_rate * self._stat_mult(
-                comp.stats.component_type_id, StatCategory.ADJACENT_TRANSFER_RATE
-            ) * self.heat_exchange_mult
-            comp_cap = self.get_effective_heat_capacity(comp)
-            if comp_cap <= 0:
-                continue
-
-            for nx, ny, nz in self.grid.neighbors(x, y, z):
-                ncomp = self.grid.get(nx, ny, nz)
-                if ncomp is None or ncomp.depleted:
+            rate = base_rate * exchange_mult
+            neg_rate = -rate
+            for ncomp, ncap in pairs:
+                if ncomp.depleted:
                     continue
-                # Skip CantLoseHeat components (0xCA=1): Reflectors + ExtremeCoolant
-                if ncomp.stats.cant_lose_heat:
-                    continue
-                ncap = self.get_effective_heat_capacity(ncomp)
-                if ncap <= 0:
-                    continue
+                nheat = ncomp.heat
                 # Pooled equilibrium: target fill = combined heat / combined cap
-                total_heat = comp.heat + ncomp.heat
-                total_cap = comp_cap + ncap
-                if total_cap <= 0:
-                    continue
-                target_ratio = max(0.0, min(1.0, total_heat / total_cap))
-                target_neighbor = target_ratio * ncap
-                delta = target_neighbor - ncomp.heat  # positive = neighbor needs more
+                ratio = (comp.heat + nheat) / (comp_cap + ncap)
+                ratio = ratio if ratio < 1.0 else 1.0
+                target_ratio = ratio if ratio > 0.0 else 0.0
+                delta = target_ratio * ncap - nheat  # positive = neighbor needs more
                 # Clamp transfer by exchanger rate
-                transfer = max(-rate, min(rate, delta))
-                if abs(transfer) > 0.001:
-                    ncomp.heat += transfer
+                transfer = delta if delta < rate else rate
+                transfer = transfer if transfer > neg_rate else neg_rate
+                if transfer > 0.001 or transfer < -0.001:
+                    ncomp.heat = nheat + transfer
                     comp.heat -= transfer
 
     def _extreme_coolant_absorb(self) -> None:
@@ -621,9 +816,7 @@ class Simulation:
         """
         if self.grid is None:
             return
-        for comp in self.components:
-            if comp.stats.type_of_component != "Coolant" or comp.stats.name != "Coolant6":
-                continue
+        for comp in self._tick_layout().coolant6:
             if comp.depleted:
                 continue
             for nx, ny, nz in self.grid.manhattan_neighbors(comp.grid_x, comp.grid_y, 0, radius=2):
@@ -647,15 +840,16 @@ class Simulation:
         Inlets/Outlets use ReactorTransferRate (stat 10) and don't self-vent.
         """
         total_vented = 0.0
-        for comp in self.components:
-            if comp.stats.self_vent_rate <= 0:
-                continue
-            # RE: In the binary, only Vents have SelfVentRate > 0.
-            # Exchangers/Inlets/Outlets store their rate in different stat slots.
-            if comp.stats.type_of_component in ("Exchanger", "Inlet", "Outlet"):
-                continue
-            vent_bonus = self._stat_mult(comp.stats.component_type_id, StatCategory.SELF_VENT_RATE)
-            rate = comp.stats.self_vent_rate * vent_bonus * self.self_vent_mult
+        bonuses = self._bonuses()
+        bonus = self._bonus
+        SELF_VENT_RATE = StatCategory.SELF_VENT_RATE
+        self_vent_mult = self.self_vent_mult
+        # RE: In the binary, only Vents have SelfVentRate > 0.
+        # Exchangers/Inlets/Outlets store their rate in different stat slots.
+        for comp in (self._tick_layout().vents if self.grid is not None else ()):
+            st = comp.stats
+            vent_bonus = bonus(bonuses, st.component_type_id, SELF_VENT_RATE)
+            rate = st.self_vent_rate * vent_bonus * self_vent_mult
             vented = min(comp.heat, rate)
             comp.heat -= vented
             total_vented += vented
@@ -670,23 +864,21 @@ class Simulation:
         """RE: fn 10438 — Inlets pull neighbor heat into reactor; outlets push reactor heat to neighbors."""
         if self.grid is None:
             return
+        layout = self._tick_layout()
+        bonuses = self._bonuses()
+        bonus = self._bonus
+        REACTOR_TRANSFER_RATE = StatCategory.REACTOR_TRANSFER_RATE
+        exchange_mult = self.heat_exchange_mult
 
         # --- Pass 1: Pre-calculate total outlet capacity for distribution ratio ---
         total_outlet_capacity = 0.0
-        for comp in self.components:
-            if comp.stats.reactor_vent_rate <= 0 or comp.depleted:
+        for comp, absorbers in layout.outlets:
+            if comp.depleted:
                 continue
-            if comp.stats.type_of_component != "Outlet":
-                continue
-            rate = comp.stats.reactor_vent_rate * self._stat_mult(
-                comp.stats.component_type_id, StatCategory.REACTOR_TRANSFER_RATE
-            ) * self.heat_exchange_mult
+            st = comp.stats
+            rate = st.reactor_vent_rate * bonus(bonuses, st.component_type_id, REACTOR_TRANSFER_RATE) * exchange_mult
             # Count neighbors with heat_capacity > 0 (0xC9 HeatAbsorb flag)
-            absorber_count = 0
-            for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
-                ncomp = self.grid.get(nx, ny, nz)
-                if ncomp is not None and ncomp.stats.heat_capacity > 0:
-                    absorber_count += 1
+            absorber_count = len(absorbers)
             if absorber_count > 0:
                 total_outlet_capacity += absorber_count * rate
 
@@ -697,45 +889,32 @@ class Simulation:
             dist_ratio = 0.0
 
         # --- Pass 2: Process inlets and outlets ---
-        for comp in self.components:
-            if comp.stats.reactor_vent_rate <= 0 or comp.depleted:
+        for comp, is_inlet, nbrs in layout.hull:
+            if comp.depleted or is_inlet is None:
                 continue
-            rate = comp.stats.reactor_vent_rate * self._stat_mult(
-                comp.stats.component_type_id, StatCategory.REACTOR_TRANSFER_RATE
-            ) * self.heat_exchange_mult
+            st = comp.stats
+            rate = st.reactor_vent_rate * bonus(bonuses, st.component_type_id, REACTOR_TRANSFER_RATE) * exchange_mult
 
-            if comp.stats.type_of_component == "Inlet":
+            if is_inlet:
                 # Inlet: pull heat from neighbors into reactor hull
-                for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
-                    ncomp = self.grid.get(nx, ny, nz)
-                    if ncomp is None:
-                        continue
-                    # Skip CantLoseHeat flag (0xCA): Reflectors + ExtremeCoolant
-                    if ncomp.stats.cant_lose_heat:
-                        continue
+                # (neighbors with CantLoseHeat (0xCA) are already left out)
+                for ncomp in nbrs:
                     transfer = min(rate, ncomp.heat)
                     if transfer > 0:
                         ncomp.heat -= transfer
                         self.reactor_heat += transfer
-
-            elif comp.stats.type_of_component == "Outlet":
+            else:
                 # Outlet: push reactor heat into neighboring heat absorbers
                 if total_outlet_capacity <= 0:
                     continue
-                absorber_count = 0
-                for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
-                    ncomp = self.grid.get(nx, ny, nz)
-                    if ncomp is not None and ncomp.stats.heat_capacity > 0:
-                        absorber_count += 1
+                absorber_count = len(nbrs)
                 if absorber_count == 0:
                     continue
                 transfer_total = min(dist_ratio * rate * absorber_count, self.reactor_heat)
                 transfer_per = transfer_total / absorber_count
-                for nx, ny, nz in self.grid.neighbors(comp.grid_x, comp.grid_y, 0):
-                    ncomp = self.grid.get(nx, ny, nz)
-                    if ncomp is not None and ncomp.stats.heat_capacity > 0:
-                        self.reactor_heat -= transfer_per
-                        ncomp.heat += transfer_per
+                for ncomp in nbrs:
+                    self.reactor_heat -= transfer_per
+                    ncomp.heat += transfer_per
         self.reactor_heat = max(0.0, self.reactor_heat)
 
     def _check_explosions(self) -> None:
@@ -761,12 +940,17 @@ class Simulation:
 
         # Build destruction list
         to_destroy = []
+        heat_capacity_multipliers: dict[int, float] = {}
         for comp in self.components:
             if comp.depleted:
                 continue
             if comp.stats.heat_capacity > 0:
-                eff_cap = comp.stats.heat_capacity * self._stat_mult(
-                    comp.stats.component_type_id, StatCategory.HEAT_CAPACITY)
+                tid = comp.stats.component_type_id
+                cap_mult = heat_capacity_multipliers.get(tid)
+                if cap_mult is None:
+                    cap_mult = self._stat_mult(tid, StatCategory.HEAT_CAPACITY)
+                    heat_capacity_multipliers[tid] = cap_mult
+                eff_cap = comp.stats.heat_capacity * cap_mult
                 if is_meltdown or comp.heat >= eff_cap:
                     to_destroy.append(comp)
             else:
@@ -786,6 +970,8 @@ class Simulation:
 
         if to_destroy:
             self._pulses_dirty = True
+            self._multipliers_dirty = True
+            self._layout_cache = None
             self.recompute_max_capacities()
 
         # Clamp small heat residuals on surviving components
@@ -795,6 +981,8 @@ class Simulation:
 
     def update_explosions(self, dt: float) -> None:
         """Advance explosion animations. Runs even when paused (cosmetic only)."""
+        if not self.explosions:
+            return
         for effect in self.explosions:
             effect.time += dt
             effect.frame = int(effect.time * effect.fps)
@@ -828,6 +1016,7 @@ class Simulation:
         vented = min(self.reactor_heat, self.manual_vent_amount)
         self.reactor_heat = max(0.0, self.reactor_heat - vented)
         self.store.heat = self.reactor_heat
+        self._preview_dirty = True
         return vented
 
     def auto_vent_rate_per_tick(self) -> float:
@@ -940,9 +1129,14 @@ class Simulation:
         This keeps UI values responsive when the reactor is paused or when a panel
         is open and ticks are suppressed.
         """
+        upgrade_revision = self.upgrade_manager.revision
+        if not self._preview_dirty and self._preview_upgrade_revision == upgrade_revision:
+            return
+
         self.reactor_heat = max(0.0, self.reactor_heat)
         self.upgrade_manager.prepare_multipliers(self)
         if self._pulses_dirty:
+            self._layout_cache = None  # layout (or depletion) changed
             self._distribute_pulses()
             self._pulses_dirty = False
 
@@ -959,6 +1153,8 @@ class Simulation:
         self.preview_vent_capacity = self.vent_dissipation_capacity_per_tick()
         self.preview_outlet_capacity = self.outlet_transfer_capacity_per_tick()
         self.preview_active_dissipation = self.active_dissipation_capacity_per_tick()
+        self._preview_dirty = False
+        self._preview_upgrade_revision = upgrade_revision
 
     def auto_sell_rate_per_tick(self) -> float:
         """RE: unnamed_function_10417 — auto-sell rate shown on sell button.
@@ -1015,6 +1211,7 @@ class Simulation:
         for u in self.upgrade_manager.upgrades:
             if not u.is_prestige:
                 u.level = 0
+        self.upgrade_manager.invalidate_cache()
 
         self.selected_component_index = -1
         self.replace_mode = True  # RE: fn 10481 sets Controller+0xA1
@@ -1036,6 +1233,7 @@ class Simulation:
         for u in self.upgrade_manager.upgrades:
             if u.is_prestige:
                 u.level = 0
+        self.upgrade_manager.invalidate_cache()
         self.store.exotic_particles = self.store.total_exotic_particles
         self.prestige_can_refund = False
         # Subspace Expansion (upgrade 50) is a prestige upgrade: shrink the grid back
@@ -1058,6 +1256,7 @@ class Simulation:
         if new_w != self.grid.width or new_h != self.grid.height:
             self.grid.resize(new_w, new_h)
             self._pulses_dirty = True
+            self._multipliers_dirty = True
             # A smaller grid drops any parts outside it; drop them from the
             # component list too so they no longer tick or count towards capacity.
             kept = [c for c in self.components if self.grid.in_bounds(c.grid_x, c.grid_y, c.grid_z)]
@@ -1069,6 +1268,7 @@ class Simulation:
         """RE: unnamed_function_10412/10413 — recompute maxHeat and maxPower.
         Base = GetStatCached(1, stat) * 1000.0 + sum of component contributions.
         Upgrade multipliers: power_cap_mult / heat_cap_mult scale the base."""
+        self.upgrade_manager.prepare_multipliers(self)
         heat_base_mult = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.REACTOR_HEAT_CAP_INCREASE)
         power_base_mult = self.upgrade_manager.get_upgrade_stat_bonus(1, StatCategory.REACTOR_POWER_CAP_INCREASE)
         base_heat = heat_base_mult * 1000.0
@@ -1082,6 +1282,7 @@ class Simulation:
             base_power += comp.stats.reactor_power_capacity_increase * power_inc_bonus
         self.max_reactor_heat = base_heat * self.heat_cap_mult
         self.max_reactor_power = base_power * self.power_cap_mult
+        self._preview_dirty = True
 
     def count_components_of_type(self, type_prefix: str) -> int:
         """Count placed components whose type_of_component or name starts with prefix."""
@@ -1206,6 +1407,7 @@ class Simulation:
         # Reset ALL upgrades (RE: fn 10330)
         for u in self.upgrade_manager.upgrades:
             u.level = 0
+        self.upgrade_manager.invalidate_cache()
         # Clear prestige state flags
         self.prestige_confirming = False
         self.prestige_can_refund = False
@@ -1228,6 +1430,9 @@ class Simulation:
         self.grid.set(x, y, z, component)
         self.components.append(component)
         self._pulses_dirty = True
+        self._multipliers_dirty = True
+        self._preview_dirty = True  # also when the caller recomputes capacities later (batches)
+        self._layout_cache = None
         if recompute_capacities:
             self.recompute_max_capacities()
         return True
@@ -1244,6 +1449,9 @@ class Simulation:
         except ValueError:
             pass
         self._pulses_dirty = True
+        self._multipliers_dirty = True
+        self._preview_dirty = True  # also when the caller recomputes capacities later (batches)
+        self._layout_cache = None
         if recompute_capacities:
             self.recompute_max_capacities()
         return existing
@@ -1269,6 +1477,9 @@ class Simulation:
                         self.selected_component_index = -1
                     page = fallback
                     break
+        cache_key = (page, self.upgrade_manager.revision, self.prestige_level)
+        if self._shop_cache_key == cache_key:
+            return self._shop_cache_components
         components = [comp for comp in self.shop_components if comp.shop_page == page]
         if not components:
             components = [comp for comp in self.shop_components if _component_shop_page(comp.name) == page]
@@ -1282,10 +1493,13 @@ class Simulation:
                 if mgr.upgrades[comp.required_upgrade].level == 0:
                     continue
             visible.append(comp)
-        return sorted(
+        result = sorted(
             visible,
             key=lambda comp: (comp.shop_row, comp.shop_col, comp.shop_order, comp.name),
         )
+        self._shop_cache_key = cache_key
+        self._shop_cache_components = result
+        return result
 
     def shop_page_locked(self, page: int) -> bool:
         if page <= 1:

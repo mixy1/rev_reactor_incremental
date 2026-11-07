@@ -33,6 +33,22 @@
             </div>
             <div id="loading-status">Initializing...</div>
         </div>
+
+        <!-- Shown while time away is simulated (main.py, Renderer.showBusy) -->
+        <div id="catch-up" hidden>
+            <div class="catch-up-panel">
+                <div class="loading-icon-row">
+                    <img src="assets/sprites/Fuel1-1.png" alt="" class="loading-sprite">
+                    <img src="assets/sprites/Fuel3-1.png" alt="" class="loading-sprite">
+                    <img src="assets/sprites/Fuel5-1.png" alt="" class="loading-sprite">
+                    <img src="assets/sprites/Fuel7-1.png" alt="" class="loading-sprite">
+                    <img src="assets/sprites/Fuel9-1.png" alt="" class="loading-sprite">
+                </div>
+                <div class="catch-up-title">Catching up</div>
+                <div class="catch-up-bar"><div id="catch-up-bar-fill"></div></div>
+                <div id="catch-up-status"></div>
+            </div>
+        </div>
     </main>
 
     <!-- Hidden file input for save import -->
@@ -46,8 +62,13 @@
                 ready: false,
                 saveText: null,
                 theme: 'default',
+                bridgeToken: null,
+                lastSaveAck: null,
             };
             let readyResolvers = [];
+            let hostStateRetry = null;
+            let pendingSaveWrite = null;
+            let saveWriteSequence = 0;
 
             function normalizeTheme(theme) {
                 return theme === 'decayed' ? 'decayed' : 'default';
@@ -64,6 +85,10 @@
             function markReady() {
                 if (state.ready) return;
                 state.ready = true;
+                if (hostStateRetry !== null) {
+                    clearInterval(hostStateRetry);
+                    hostStateRetry = null;
+                }
                 resolveReady();
             }
 
@@ -79,6 +104,20 @@
                     }
                     markReady();
                 }
+            }
+
+            function postPendingSave() {
+                if (!pendingSaveWrite || !state.bridgeToken) return;
+                if (!window.parent || window.parent === window) return;
+                window.parent.postMessage(
+                    {
+                        type: 'rev-reactor-save-write',
+                        bridgeToken: state.bridgeToken,
+                        writeId: pendingSaveWrite.writeId,
+                        saveText: pendingSaveWrite.saveText,
+                    },
+                    '*'
+                );
             }
 
             function downloadTextLocal(filename, text) {
@@ -102,9 +141,10 @@
                     if (state.ready) return Promise.resolve(true);
                     return new Promise((resolve) => {
                         readyResolvers.push(resolve);
+                        // A timeout is a prompt to retry, not permission to
+                        // start with an empty save and overwrite durable state.
                         setTimeout(() => {
-                            if (!state.ready) markReady();
-                            resolve(state.ready);
+                            if (!state.ready) requestHostState();
                         }, timeoutMs);
                     });
                 },
@@ -114,17 +154,34 @@
                 setSaveText(text) {
                     state.saveText = String(text);
                     if (window.parent && window.parent !== window) {
-                        window.parent.postMessage(
-                            { type: 'rev-reactor-save-write', saveText: state.saveText },
-                            '*'
-                        );
+                        saveWriteSequence += 1;
+                        pendingSaveWrite = {
+                            writeId: `${Date.now().toString(36)}-${saveWriteSequence.toString(36)}`,
+                            saveText: state.saveText,
+                        };
+                        postPendingSave();
                         return;
                     }
                     try {
                         localStorage.setItem(SAVE_KEY, state.saveText);
+                        state.lastSaveAck = {
+                            accepted: true,
+                            durable: true,
+                            savedAt: Date.now(),
+                        };
                     } catch (_err) {
-                        // Ignore unavailable localStorage in restricted contexts.
+                        state.lastSaveAck = {
+                            accepted: true,
+                            durable: false,
+                            savedAt: Date.now(),
+                        };
                     }
+                },
+                getSaveStatus() {
+                    return {
+                        pending: pendingSaveWrite !== null,
+                        lastAck: state.lastSaveAck,
+                    };
                 },
                 getTheme() {
                     return state.theme;
@@ -132,7 +189,12 @@
                 downloadText(filename, text) {
                     if (window.parent && window.parent !== window) {
                         window.parent.postMessage(
-                            { type: 'rev-reactor-download', filename, text },
+                            {
+                                type: 'rev-reactor-download',
+                                bridgeToken: state.bridgeToken,
+                                filename,
+                                text,
+                            },
                             '*'
                         );
                         return true;
@@ -149,24 +211,68 @@
                 if (data.type === 'rev-reactor-host-state') {
                     state.theme = normalizeTheme(data.theme);
                     state.saveText = typeof data.saveText === 'string' ? data.saveText : null;
+                    state.bridgeToken = typeof data.bridgeToken === 'string'
+                        ? data.bridgeToken
+                        : null;
                     markReady();
+                    return;
+                }
+
+                if (data.type === 'rev-reactor-save-ack') {
+                    if (data.bridgeToken !== state.bridgeToken) return;
+                    if (!pendingSaveWrite || data.writeId !== pendingSaveWrite.writeId) return;
+                    state.lastSaveAck = {
+                        accepted: data.accepted !== false,
+                        durable: data.durable === true,
+                        savedAt: Number(data.savedAt) || Date.now(),
+                    };
+                    pendingSaveWrite = null;
                     return;
                 }
 
                 if (data.type === 'rev-reactor-theme-set') {
                     state.theme = normalizeTheme(data.theme);
+                    return;
+                }
+
+                if (data.type === 'rev-reactor-heartbeat-request') {
+                    beat();
                 }
             });
 
             function beat() {
                 if (window.parent && window.parent !== window) {
-                    window.parent.postMessage({ type: 'rev-reactor-beat', ts: Date.now() }, '*');
+                    window.parent.postMessage(
+                        {
+                            type: 'rev-reactor-beat',
+                            bridgeToken: state.bridgeToken,
+                            ts: Date.now(),
+                        },
+                        '*'
+                    );
                 }
             }
 
             requestHostState();
+            if (window.parent && window.parent !== window && !state.ready) {
+                // The child can load before the host installs its message
+                // listener (notably with Safari's cached-page scheduling).
+                // Retry until the host acknowledges with its persisted state.
+                hostStateRetry = setInterval(() => {
+                    if (state.ready) {
+                        clearInterval(hostStateRetry);
+                        hostStateRetry = null;
+                        return;
+                    }
+                    requestHostState();
+                }, 250);
+            }
             beat();
-            setInterval(beat, 500);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) beat();
+            });
+            setInterval(beat, 2000);
+            setInterval(postPendingSave, 1000);
         })();
     </script>
     <script src="renderer.js"></script>

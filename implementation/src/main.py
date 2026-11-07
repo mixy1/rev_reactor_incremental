@@ -53,6 +53,9 @@ from raylib_compat import (
     get_pending_file_import,
 )
 
+if _WEB:
+    from raylib_compat import get_inactive_time, is_save_requested
+
 if not _WEB:
     from raylib_compat import (
         WindowShouldClose,
@@ -74,7 +77,7 @@ _CTRL_KEYS = tuple(
     if v is not None
 ) or ((341, 345) if isinstance(getattr(_rc, "KEY_ESCAPE", 256), int) else ())
 
-from game.simulation import Simulation
+from game.simulation import Simulation, MAX_CATCH_UP_SECONDS, MAX_CATCH_UP_TICKS
 from game.save import save_game, load_game, _handle_file_import
 
 from assets import sprite_path
@@ -82,7 +85,7 @@ if not _WEB:
     from assets import reference_path
 from game.layout import load_layout
 from game.grid import Grid
-from game.simulation import ReactorComponent, ExplosionEffect, demo_simulation
+from game.simulation import ReactorComponent, demo_simulation
 from game.ui import Ui
 
 # Global reference for beforeunload auto-save from JS
@@ -120,6 +123,54 @@ _web_wheel_hooks: list = []  # keeps the JS proxies alive; non-empty = listener 
 # After a Ctrl+wheel, ordinary wheel scrolling stays blocked this long (s): the
 # game's own wheel reading can deliver the same scroll a frame later.
 _ZOOM_SCROLL_BLOCK_S = 0.25
+
+# Catch-ups this many ticks or longer show the "Catching up" overlay.
+_CATCH_UP_NOTICE_TICKS = 60
+# Simulate this long, then give the browser a turn (heartbeat, progress bar).
+# The host page restarts a game that sends no heartbeat for ~17 s.
+_CATCH_UP_SLICE_S = 0.25
+
+
+def _format_duration(seconds: float) -> str:
+    s = int(seconds)
+    if s >= 3600:
+        return f"{s // 3600}h {s % 3600 // 60:02d}m"
+    if s >= 60:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s}s"
+
+
+async def _run_catch_up(sim, seconds: float) -> int:
+    """Simulate missed time (Simulation.catch_up's ticks). A long catch-up
+    shows the waiting overlay and runs in short slices, giving the browser a
+    turn between them so the page keeps its heartbeat and the progress bar
+    moves. The game itself doesn't run until it's done."""
+    interval = 1.0 / sim.ticks_per_second if sim.ticks_per_second > 0 else 1.0
+    covered = min(seconds, MAX_CATCH_UP_SECONDS, MAX_CATCH_UP_TICKS * interval)
+    overlay = _WEB and not sim.paused and covered / interval >= _CATCH_UP_NOTICE_TICKS
+    if overlay:
+        try:
+            await _Renderer.showBusy(f"Simulating {_format_duration(covered)} of time away...")
+        except Exception:
+            overlay = False
+    ran = 0
+    try:
+        slice_start = time.perf_counter()
+        for done, total in sim.iter_catch_up(seconds):
+            ran = done
+            if overlay and time.perf_counter() - slice_start >= _CATCH_UP_SLICE_S:
+                # A save made while we wait (page closing) keeps the rest owed.
+                sim.pending_catch_up_seconds = (total - done) * interval
+                _Renderer.setBusyProgress(done / total)
+                await _Renderer.yieldToBrowser()
+                slice_start = time.perf_counter()
+    finally:
+        if overlay:
+            try:
+                _Renderer.hideBusy()
+            except Exception:
+                pass
+    return ran
 
 
 def _install_web_ctrl_wheel() -> None:
@@ -324,6 +375,25 @@ def _subspace_unlocked(sim) -> bool:
 
 def _load_texture(name: str) -> Texture2D:
     return load_texture(str(sprite_path(name)))
+
+
+def _draw_button_label(
+    label: str,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    base_size: int,
+    min_size: int = 8,
+) -> None:
+    font_size = base_size
+    max_width = max(8, width - 10)
+    while font_size > min_size and measure_text(label, font_size) > max_width:
+        font_size -= 1
+    text_width = measure_text(label, font_size)
+    text_x = x + max(0, (width - text_width) // 2)
+    text_y = y + max(0, (height - font_size) // 2) - 1
+    draw_text(label, text_x, text_y, font_size, Color(230, 230, 230, 255))
 
 
 async def main() -> None:
@@ -537,8 +607,11 @@ async def main() -> None:
 
     if _WEB:
         _install_web_ctrl_wheel()
+        # Persist the loaded/caught-up state immediately, then keep the maximum
+        # loss window short for browsers that evict background tabs.
+        save_game(sim, save_path)
         last_save_time = get_time()
-        AUTO_SAVE_INTERVAL = 30.0  # Auto-save every 30 seconds
+        AUTO_SAVE_INTERVAL = 5.0
 
     try:
         while True:
@@ -548,11 +621,33 @@ async def main() -> None:
             dt = get_frame_time()
             view_mode_before_input = sim.view_mode
 
+            # Browsers suspend hidden tabs. Advance the deterministic tick
+            # pipeline once on resume instead of burning CPU in the background,
+            # along with the time since the save after a load / import.
+            inactive_seconds = get_inactive_time() if _WEB else 0.0
+            if inactive_seconds > 0.0 and not sim.paused and sim.view_mode == "reactor":
+                sim.pending_catch_up_seconds += inactive_seconds
+            if sim.pending_catch_up_seconds > 0.0:
+                ran = await _run_catch_up(sim, sim.pending_catch_up_seconds)
+                sim.pending_catch_up_seconds = 0.0
+                if ran > 0:
+                    save_game(sim, save_path)
+                    if _WEB:
+                        last_save_time = get_time()
+
+            # visibilitychange/pagehide wakes one final frame before Safari
+            # suspends the iframe, avoiding reliance on beforeunload.
+            if _WEB and is_save_requested():
+                save_game(sim, save_path)
+                last_save_time = get_time()
+
             # Check for pending file import (queued by JS file input)
             if _WEB:
                 pending_import = get_pending_file_import()
                 if pending_import is not None:
-                    _handle_file_import(str(pending_import))
+                    if _handle_file_import(str(pending_import)):
+                        save_game(sim, save_path)
+                        last_save_time = get_time()
 
             # RE fn 10408 lines 387652-387665: ticks only run when
             # NOT manually paused AND no UI panel is open.  Controller+0x28
@@ -995,6 +1090,7 @@ async def main() -> None:
                     bar_h = max(2, cell_sz // 10)
                     bar_margin = 2
                     bar_w = cell_sz - bar_margin * 2
+                    heat_bar_pulse = abs(math.sin(get_time() * 6.0))
 
                     for gx, gy, _gz, component in sim.grid.iter_cells():
                         if component is None:
@@ -1033,16 +1129,13 @@ async def main() -> None:
                             ui.draw_warning_badge(badge_x, badge_y, badge_size)
 
                         bars_drawn = 0
-                        stats = component.stats
-
                         eff_hc = sim.get_effective_heat_capacity(component)
                         if eff_hc > 0.0 and not component.depleted:
                             raw_fill = component.heat / eff_hc
                             fill = min(1.0, max(0.0, raw_fill))
                             bar_y = py + cell_sz - bar_margin - bar_h
                             if raw_fill > 0.8:
-                                pulse = abs(math.sin(get_time() * 6.0))
-                                bg_r = int(40 + 80 * pulse)
+                                bg_r = int(40 + 80 * heat_bar_pulse)
                                 draw_rectangle(
                                     int(px + bar_margin), int(bar_y),
                                     int(bar_w), int(bar_h),
@@ -1056,10 +1149,9 @@ async def main() -> None:
                                 )
                             if fill > 0.001:
                                 if raw_fill > 0.8:
-                                    pulse = abs(math.sin(get_time() * 6.0))
                                     r = 255
-                                    g = int(120 + 135 * pulse)
-                                    b = int(60 + 195 * pulse)
+                                    g = int(120 + 135 * heat_bar_pulse)
+                                    b = int(60 + 195 * heat_bar_pulse)
                                 else:
                                     r = int(180 + 75 * fill)
                                     g = int(60 * (1.0 - fill))
@@ -1308,7 +1400,7 @@ async def main() -> None:
 
             # Yield to browser event loop
             if _WEB:
-                await _wait_frame()  # vsync via requestAnimationFrame Promise
+                await _wait_frame(bool(sim.explosions))
             else:
                 await asyncio.sleep(0)
     finally:

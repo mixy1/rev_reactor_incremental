@@ -192,6 +192,18 @@ main {
     text-align: center;
 }
 
+.game-save-status {
+    margin-top: 0.25rem;
+    min-height: 1.2em;
+    font-size: 0.75rem;
+    color: var(--muted-fg);
+    text-align: center;
+}
+
+.game-save-status.save-error {
+    color: #ff8f8f;
+}
+
 .game-attribution {
     margin-top: 0.5rem;
     font-size: 0.8125rem;
@@ -310,6 +322,64 @@ main {
 }
 
 #loading-status {
+    font-size: 0.8125rem;
+    color: var(--muted-fg);
+}
+
+/* ── Catch-up overlay ───────────────────────────────────── */
+/* Shown while time away is simulated (in slices, with the bar updated */
+/* between them). */
+
+#catch-up {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(13, 13, 13, 0.6);
+}
+
+#catch-up[hidden] {
+    display: none;
+}
+
+.catch-up-panel {
+    text-align: center;
+    padding: 20px 32px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.catch-up-panel .loading-icon-row {
+    margin-bottom: 12px;
+}
+
+.catch-up-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--fg);
+    margin-bottom: 6px;
+}
+
+.catch-up-bar {
+    width: 240px;
+    height: 6px;
+    background: var(--muted);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 0 auto 10px;
+}
+
+#catch-up-bar-fill {
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(90deg, var(--reactor-glow), var(--azure));
+}
+
+#catch-up-status {
     font-size: 0.8125rem;
     color: var(--muted-fg);
 }

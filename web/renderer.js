@@ -44,21 +44,36 @@ globalThis.Renderer = (() => {
         _emModule = mod;
     }
 
-    // Temp canvas for color tinting (object reused across calls)
-    let _tintCanvas = null;
-    let _tintCtx = null;
-    const _tintResult = { canvas: null, ctx: null };
+    // Color-tinted sprite variants are immutable. Cache their composite once
+    // per source image/region/tint instead of rebuilding them every frame.
+    const _tintCache = new WeakMap();
 
-    function getTintCanvas(w, h) {
-        if (!_tintCanvas) {
-            _tintCanvas = document.createElement('canvas');
-            _tintCtx = _tintCanvas.getContext('2d');
-            _tintResult.canvas = _tintCanvas;
-            _tintResult.ctx = _tintCtx;
+    function getTintedImage(img, sx, sy, sw, sh, r, g, b) {
+        let variants = _tintCache.get(img);
+        if (!variants) {
+            variants = new Map();
+            _tintCache.set(img, variants);
         }
-        if (_tintCanvas.width < w) _tintCanvas.width = w;
-        if (_tintCanvas.height < h) _tintCanvas.height = h;
-        return _tintResult;
+        const key = `${sx},${sy},${sw},${sh},${r|0},${g|0},${b|0}`;
+        let tinted = variants.get(key);
+        if (tinted) return tinted;
+
+        const tw = Math.ceil(Math.abs(sw));
+        const th = Math.ceil(Math.abs(sh));
+        if (tw === 0 || th === 0) return null;
+        tinted = document.createElement('canvas');
+        tinted.width = tw;
+        tinted.height = th;
+        const tctx = tinted.getContext('2d');
+        tctx.imageSmoothingEnabled = false;
+        tctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+        tctx.globalCompositeOperation = 'multiply';
+        tctx.fillStyle = rgb(r, g, b);
+        tctx.fillRect(0, 0, tw, th);
+        tctx.globalCompositeOperation = 'destination-in';
+        tctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+        variants.set(key, tinted);
+        return tinted;
     }
 
     function registerTexture(name, img) {
@@ -145,36 +160,13 @@ globalThis.Renderer = (() => {
             return;
         }
 
-        // Grayscale dim used to approximate with alpha, but that makes
-        // textures transparent instead of darker.  Fall through to the
-        // proper multiply-composite path below.
-
-        // Color tint (e.g. green highlight) — offscreen composite
-        const tw = Math.ceil(Math.abs(sw));
-        const th = Math.ceil(Math.abs(sh));
-        if (tw === 0 || th === 0) return;
-
-        const { canvas: tc, ctx: tctx } = getTintCanvas(tw, th);
-        tctx.clearRect(0, 0, tw, th);
-
-        // Draw source region
-        tctx.globalCompositeOperation = 'source-over';
-        tctx.globalAlpha = 1;
-        tctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
-
-        // Multiply with tint color
-        tctx.globalCompositeOperation = 'multiply';
-        tctx.fillStyle = rgb(r, g, b);
-        tctx.fillRect(0, 0, tw, th);
-
-        // Restore alpha from original
-        tctx.globalCompositeOperation = 'destination-in';
-        tctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+        const tinted = getTintedImage(img, sx, sy, sw, sh, r, g, b);
+        if (!tinted) return;
 
         // Blit to main canvas
         const prev = ctx.globalAlpha;
         ctx.globalAlpha = a / 255;
-        ctx.drawImage(tc, 0, 0, tw, th, dx, dy, dw, dh);
+        ctx.drawImage(tinted, 0, 0, tinted.width, tinted.height, dx, dy, dw, dh);
         ctx.globalAlpha = prev;
     }
 
@@ -299,16 +291,146 @@ globalThis.Renderer = (() => {
         }
     }
 
-    /** Returns a Promise that resolves on the next frame/tick.
-     * Visible tab: requestAnimationFrame (vsync).
-     * Hidden tab: setTimeout fallback so simulation can keep advancing.
-     */
-    function waitFrame() {
+    const ACTIVE_FRAME_MS = 1000 / 30;
+    const IDLE_FRAME_MS = 1000 / 10;
+    let _lastFrameAt = 0;
+    let _resolvedFrames = 0;
+    const _visibilityWaiters = [];
+    let _pendingFrame = null;
+
+    function finishFrame(ticket, now) {
+        if (ticket.settled) return;
+        ticket.settled = true;
+        if (_pendingFrame === ticket) _pendingFrame = null;
+        _lastFrameAt = now;
+        _resolvedFrames += 1;
+        ticket.resolve(now);
+    }
+
+    function scheduleFrame(ticket, animationActive) {
+        if (ticket.settled) return;
         if (document.hidden || document.visibilityState !== 'visible') {
-            // Hidden tabs throttle timers, but this still allows periodic ticks.
-            return new Promise(resolve => setTimeout(resolve, 50));
+            _visibilityWaiters.push(() => scheduleFrame(ticket, animationActive));
+            return;
         }
-        return new Promise(resolve => requestAnimationFrame(resolve));
+        requestAnimationFrame((now) => {
+            if (ticket.settled) return;
+            if (document.hidden || document.visibilityState !== 'visible') {
+                _visibilityWaiters.push(() => scheduleFrame(ticket, animationActive));
+                return;
+            }
+            const inputActive = globalThis.Input && globalThis.Input.wasRecentlyActive();
+            const interval = animationActive || inputActive ? ACTIVE_FRAME_MS : IDLE_FRAME_MS;
+            const remaining = interval - (now - _lastFrameAt);
+            if (remaining > 2) {
+                setTimeout(() => scheduleFrame(ticket, animationActive), remaining);
+                return;
+            }
+            finishFrame(ticket, now);
+        });
+    }
+
+    function wakeForLifecycleSave() {
+        if (globalThis.Input && globalThis.Input.requestLifecycleSave) {
+            globalThis.Input.requestLifecycleSave();
+        }
+        if (_pendingFrame !== null) {
+            finishFrame(_pendingFrame, performance.now());
+        }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden || document.visibilityState !== 'visible') {
+            // Wake Python once so it can serialize current state before Safari
+            // suspends or evicts the page. Its next wait remains fully hidden.
+            wakeForLifecycleSave();
+            return;
+        }
+        _lastFrameAt = 0;
+        const waiters = _visibilityWaiters.splice(0);
+        for (const resume of waiters) resume();
+    });
+    window.addEventListener('pagehide', wakeForLifecycleSave);
+
+    /**
+     * Pace visible rendering at 30 fps while interactive/animated and 10 fps
+     * while idle. Hidden tabs do no Python or canvas work; wall time is caught
+     * up when visibility returns.
+     */
+    function waitFrame(animationActive = false) {
+        return new Promise(resolve => {
+            const ticket = { resolve, settled: false };
+            _pendingFrame = ticket;
+            scheduleFrame(ticket, Boolean(animationActive));
+        });
+    }
+
+    // ── Catch-up overlay ──────────────────────────────────────────────
+    // Shown while main.py simulates time away. The catch-up runs in short
+    // slices with yieldToBrowser() between them, so the page keeps sending
+    // its heartbeat (the host restarts a game that goes quiet) and the
+    // progress bar keeps moving.
+    function showBusy(text) {
+        const el = document.getElementById('catch-up');
+        if (!el) return Promise.resolve();
+        const status = document.getElementById('catch-up-status');
+        if (status) status.textContent = text || '';
+        setBusyProgress(0);
+        el.hidden = false;
+        if (document.hidden || document.visibilityState !== 'visible') {
+            return Promise.resolve();  // nobody to show it to
+        }
+        return new Promise(resolve => {
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                resolve();
+            };
+            // The second callback runs after the frame showing the overlay
+            // has been painted.
+            requestAnimationFrame(() => requestAnimationFrame(finish));
+            setTimeout(finish, 250);  // never hold the game up for long
+        });
+    }
+
+    function setBusyProgress(fraction) {
+        const fill = document.getElementById('catch-up-bar-fill');
+        if (!fill) return;
+        const pct = Math.max(0, Math.min(1, Number(fraction) || 0)) * 100;
+        fill.style.width = pct.toFixed(1) + '%';
+    }
+
+    function hideBusy() {
+        const el = document.getElementById('catch-up');
+        if (el) el.hidden = true;
+    }
+
+    /** Give the browser a turn (timers, messages such as the heartbeat,
+     * and, while visible, one painted frame), then continue. */
+    function yieldToBrowser() {
+        return new Promise(resolve => {
+            let done = false;
+            const channel = new MessageChannel();
+            const finish = () => {
+                if (done) return;
+                done = true;
+                channel.port1.close();
+                resolve();
+            };
+            channel.port1.onmessage = finish;
+            if (document.hidden || document.visibilityState !== 'visible') {
+                // Background tabs slow timers down but not messages.
+                channel.port2.postMessage(null);
+                return;
+            }
+            requestAnimationFrame(() => channel.port2.postMessage(null));
+            setTimeout(finish, 100);  // in case the tab is hidden before the frame
+        });
+    }
+
+    function getRuntimeStats() {
+        return { resolvedFrames: _resolvedFrames, hidden: document.hidden };
     }
 
     return {
@@ -321,6 +443,11 @@ globalThis.Renderer = (() => {
         renderBatch,
         setWasmMemory,
         waitFrame,
+        showBusy,
+        setBusyProgress,
+        hideBusy,
+        yieldToBrowser,
+        getRuntimeStats,
         textures,
         texturesByName,
     };
