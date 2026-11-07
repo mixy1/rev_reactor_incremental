@@ -639,6 +639,18 @@ def _build_save_dict(sim: Simulation) -> dict:
     }
 
 
+def _saved_durability(comp_data: dict) -> float:
+    """A part's saved durability; 0 when the save doesn't set one (missing,
+    null or not a number)."""
+    value = comp_data.get("durability")
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _restore_from_dict(sim: Simulation, data: dict) -> bool:
     """Restore simulation state from a save dict. Returns True on success."""
     from game.simulation import ReactorComponent
@@ -705,12 +717,20 @@ def _restore_from_dict(sim: Simulation, data: dict) -> bool:
             rc = ReactorComponent(
                 stats=stats,
                 heat=float(comp_data.get("heat", 0.0)),
-                durability=float(comp_data.get("durability", 0.0)),
+                durability=_saved_durability(comp_data),
                 depleted=bool(comp_data.get("depleted", False)),
                 grid_x=int(comp_data.get("x", 0)),
                 grid_y=int(comp_data.get("y", 0)),
                 grid_z=int(comp_data.get("z", 0)),
             )
+            # ReactorComponent treats a durability of 0 as "not set" and fills it to
+            # the maximum. On load the save is what counts: use the saved value
+            # (0 for a depleted cell) and 0 when the save doesn't set one.
+            rc.durability = _saved_durability(comp_data)
+            # A depleted cell has no durability left. Saves written while a load bug
+            # refilled depleted cells can hold a positive value: put it back to 0.
+            if rc.depleted and rc.durability > 0.0:
+                rc.durability = 0.0
 
             if sim.grid is not None and sim.grid.in_bounds(rc.grid_x, rc.grid_y, rc.grid_z):
                 sim.grid.set(rc.grid_x, rc.grid_y, rc.grid_z, rc)

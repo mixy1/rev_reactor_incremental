@@ -98,6 +98,23 @@ _sim_ref = None
 _web_zoom_wheel = [0.0]
 _web_ctrl_wheel_seen = [False]
 _web_ctrl_down = [False]        # Ctrl state from the browser's own key events
+_web_keydowns: list = []        # (key, ctrl) for each key pressed since the last frame (web)
+_KEY_C = getattr(_rc, "KEY_C", 67)  # desktop: the build's C / V keys (raylib's numbers otherwise)
+_KEY_V = getattr(_rc, "KEY_V", 86)
+# Desktop: every key code to check when watching for "any other key" (the
+# build's own KEY_* constants, plus raylib's range when its codes are numbers),
+# and the modifier keys that don't count as "another key" (Ctrl / Super, and
+# Shift, which adds / removes parts while selecting).
+_ALL_KEY_CODES = tuple(dict.fromkeys(
+    [v for n, v in vars(_rc).items() if n.startswith("KEY_") and isinstance(v, int) and not isinstance(v, bool) and v > 0]
+    + (list(range(32, 349)) if isinstance(getattr(_rc, "KEY_ESCAPE", 256), int) else [])
+))
+_MODIFIER_KEY_CODES = frozenset(
+    v for v in (getattr(_rc, n, None) for n in ("KEY_LEFT_CONTROL", "KEY_RIGHT_CONTROL", "KEY_CONTROL",
+                                              "KEY_LEFT_SUPER", "KEY_RIGHT_SUPER",
+                                              "KEY_LEFT_SHIFT", "KEY_RIGHT_SHIFT", "KEY_SHIFT"))
+    if v is not None
+) | (frozenset({341, 345, 343, 347, 340, 344}) if isinstance(getattr(_rc, "KEY_ESCAPE", 256), int) else frozenset())
 _web_last_ctrl_wheel = [-1e9]   # time.monotonic() of the last Ctrl+wheel over the canvas
 _web_wheel_hooks: list = []  # keeps the JS proxies alive; non-empty = listener installed
 # After a Ctrl+wheel, ordinary wheel scrolling stays blocked this long (s): the
@@ -153,6 +170,8 @@ def _install_web_ctrl_wheel() -> None:
         try:
             _web_ctrl_down[0] = bool(event.ctrlKey) or (
                 str(event.type) == "keydown" and str(event.key) == "Control")
+            if str(event.type) == "keydown" and not bool(event.repeat):
+                _web_keydowns.append((str(event.key), bool(event.ctrlKey)))
         except Exception:
             pass
 
@@ -183,6 +202,45 @@ def _ctrl_held() -> bool:
         except Exception:
             continue
     return False
+
+
+def _take_key_events(watch_all: bool) -> tuple[bool, bool, bool]:
+    """Key presses this frame as (ctrl_c, ctrl_v, any_other_key). Call once per
+    frame. Ctrl / Super / Shift on their own don't count as another key. On desktop,
+    every key is only checked when watch_all is set (while a copy is waiting)."""
+    copy = paste = other = False
+    if _web_wheel_hooks:  # web: the browser's own key events
+        events = list(_web_keydowns)
+        _web_keydowns.clear()
+        for key, ctrl in events:
+            k = key.lower()
+            if k in ("control", "meta", "os", "shift"):
+                continue
+            if ctrl and k == "c":
+                copy = True
+            elif ctrl and k == "v":
+                paste = True
+            else:
+                other = True
+        return copy, paste, other
+
+    def pressed(code) -> bool:
+        try:
+            return is_key_pressed(code) is True
+        except Exception:
+            return False
+
+    ctrl = _ctrl_held()
+    copy = ctrl and pressed(_KEY_C)
+    paste = ctrl and pressed(_KEY_V)
+    if watch_all:
+        for code in _ALL_KEY_CODES:
+            if code in _MODIFIER_KEY_CODES or (ctrl and code in (_KEY_C, _KEY_V)):
+                continue
+            if pressed(code):
+                other = True
+                break
+    return copy, paste, other
 
 
 def _take_zoom_wheel(wheel_y: float) -> float:
@@ -515,6 +573,7 @@ async def main() -> None:
             # Enlarged blueprint view: swallows all input while open (any
             # press closes it) and until the mouse is released afterwards.
             input_blocked = ui.blueprint_input_gate()
+            copy_pressed, paste_pressed, other_key_pressed = _take_key_events(ui.blueprint_copying)
 
             if not input_blocked:
                 # ── Keyboard events ──────────────────────────────────────
@@ -543,6 +602,17 @@ async def main() -> None:
                         sim.view_mode = "reactor"
                     else:
                         sim.selected_component_index = -1
+
+                # CTRL+C: drag to copy an area of the reactor; CTRL+V then places it
+                # like a blueprint (same cost display and placement rules; not
+                # saved). Any other key discards the copy.
+                if copy_pressed and sim.view_mode == "reactor" and sim.grid is not None:
+                    ui.start_copy_selection(sim)
+                elif ui.blueprint_copying:
+                    if paste_pressed:
+                        ui.paste_copy(sim)
+                    elif other_key_pressed:
+                        ui.cancel_blueprint_modes()
 
                 # X: debug — multiply money by 10
                 if not _WEB and is_key_pressed(KEY_X):
@@ -730,18 +800,44 @@ async def main() -> None:
                                 if sim.store.money >= cost:
                                     if sim.place_component(cx, cy, ReactorComponent(stats=selected)):
                                         sim.store.money -= cost
-                        elif Simulation.can_replace(existing, selected):
+                        elif Simulation.can_replace(existing, selected) or (
+                            # SHIFT also allows swapping cells for identical fresh ones
+                            is_key_down(KEY_SHIFT) and existing.stats.name == selected.name
+                        ):
                             # Click-to-replace: always active for compatible components
                             cost = sim.get_component_cost(selected)
                             refund = Simulation.sell_value(existing)
+                            shift_bulk = is_key_down(KEY_SHIFT)
 
-                            if is_key_down(KEY_SHIFT):
-                                existing_name = existing.stats.name
-                                for (mcx, mcy, _, mcomp) in sim.grid.iter_cells():
-                                    if mcomp and mcomp.stats.name == existing_name:
-                                        if sim.store.money + refund >= cost:
+                            if shift_bulk and not is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+                                # SHIFT replaces in bulk once per click, not on every
+                                # frame the button is held (identical swaps would repeat).
+                                pass
+                            elif shift_bulk and existing.depleted:
+                                # SHIFT on a depleted cell: replace every depleted cell
+                                # the selected part can replace, whatever its type.
+                                for (mcx, mcy, _, mcomp) in list(sim.grid.iter_cells()):
+                                    if mcomp and mcomp.depleted and Simulation.can_replace(mcomp, selected):
+                                        cell_refund = Simulation.sell_value(mcomp)
+                                        if sim.store.money + cell_refund >= cost:
                                             sim.remove_component(mcx, mcy, recompute_capacities=False)
-                                            sim.store.money += refund
+                                            sim.store.money += cell_refund
+                                            if sim.place_component(mcx, mcy, ReactorComponent(stats=selected), recompute_capacities=False):
+                                                sim.store.money -= cost
+                                        else:
+                                            break
+                                sim.recompute_max_capacities()
+                            elif shift_bulk:
+                                # SHIFT on an active cell: replace every cell of the same
+                                # type (depleted or not), including identical swaps that
+                                # refresh them.
+                                existing_name = existing.stats.name
+                                for (mcx, mcy, _, mcomp) in list(sim.grid.iter_cells()):
+                                    if mcomp and mcomp.stats.name == existing_name:
+                                        cell_refund = Simulation.sell_value(mcomp)
+                                        if sim.store.money + cell_refund >= cost:
+                                            sim.remove_component(mcx, mcy, recompute_capacities=False)
+                                            sim.store.money += cell_refund
                                             if sim.place_component(mcx, mcy, ReactorComponent(stats=selected), recompute_capacities=False):
                                                 sim.store.money -= cost
                                         else:
@@ -976,7 +1072,8 @@ async def main() -> None:
                             bars_drawn += 1
 
                         eff_dur = sim.get_effective_max_durability(component)
-                        if eff_dur > 0.0:
+                        # Depleted cells show no durability bar at all (like the heat bar)
+                        if eff_dur > 0.0 and not component.depleted:
                             fill = min(1.0, max(0.0, component.durability / eff_dur))
                             bar_y = py + cell_sz - bar_margin - bar_h * (bars_drawn + 1) - bars_drawn
                             draw_rectangle(
@@ -984,7 +1081,9 @@ async def main() -> None:
                                 int(bar_w), int(bar_h),
                                 Color(10, 30, 10, 180),
                             )
-                            if fill > 0.001:
+                            # Any durability left (down to the last tick) shows at least
+                            # a 1px sliver: round the width up instead of down.
+                            if component.durability > 0.0:
                                 if fill > 0.5:
                                     r = int(220 * (1.0 - fill) * 2)
                                     g = 200
@@ -993,7 +1092,7 @@ async def main() -> None:
                                     g = int(200 * fill * 2)
                                 draw_rectangle(
                                     int(px + bar_margin), int(bar_y),
-                                    int(bar_w * fill), int(bar_h),
+                                    max(1, math.ceil(bar_w * fill)), int(bar_h),
                                     Color(r, g, 30, 220),
                                 )
                             bars_drawn += 1

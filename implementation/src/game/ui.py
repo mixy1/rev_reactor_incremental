@@ -80,15 +80,30 @@ def _bp_in_rect(x: int, y: int, rect) -> bool:
     return rect is None or (rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3])
 
 
-def _bp_capture(sim, name: str, rect=None) -> Optional[dict]:
-    """Snapshot placed components (only those inside rect, if given)."""
+def _bp_part_at(grid, x: int, y: int):
+    """Component at cell (x, y), or None."""
+    get = getattr(grid, "get", None)
+    if get is not None:
+        try:
+            return get(x, y, 0)
+        except Exception:
+            pass
+    for gx, gy, _gz, comp in grid.iter_cells():
+        if gx == x and gy == y:
+            return comp
+    return None
+
+
+def _bp_capture(sim, name: str, rect=None, include=None) -> Optional[dict]:
+    """Snapshot placed components: those for which include(x, y) is true when
+    given, else those inside rect (or all of them when rect is None)."""
     grid = sim.grid
     if grid is None:
         return None
     cells = [
         [int(gx), int(gy), comp.stats.name]
         for gx, gy, _gz, comp in grid.iter_cells()
-        if comp is not None and _bp_in_rect(gx, gy, rect)
+        if comp is not None and (include(gx, gy) if include is not None else _bp_in_rect(gx, gy, rect))
     ]
     if not cells:
         return None
@@ -112,6 +127,11 @@ def _bp_bounds(bp: dict) -> tuple[int, int, int, int]:
 _BP_THUMB_Y_OFFSET = 6
 # How much shorter (px) the thumbnail's max height is than the old square size.
 _BP_THUMB_H_SHRINK = 4
+# Ctrl+C copy selection colours (violet; the save selection is blue)
+_BP_COPY_FILL = (170, 110, 255, 70)
+_BP_COPY_LINE = (200, 160, 255)
+_BP_EXCLUDED_SHADE = (10, 10, 18, 165)  # dims a part left out of a selection
+_BP_REMOVE_HOVER = (255, 95, 95)  # Shift held: outline of a part a click would remove
 # Colour of the "needs force" outline (the save selection's outline, in red).
 _BP_FORCE_OUTLINE_COLOR = (255, 60, 60)
 
@@ -292,6 +312,13 @@ class Ui:
     blueprint_sel_rect: Optional[tuple] = None  # (x0, y0, x1, y1) inclusive cells
     blueprint_sel_anchor: Optional[tuple] = None
     blueprint_sel_dragging: bool = False
+    blueprint_sel_removed: set = field(default_factory=set)  # parts inside the rect left out of it
+    _bp_painting: bool = False  # Shift+click held: adding / removing parts under the cursor
+    _bp_paint_include: Optional[bool] = None  # True = adding, False = removing (first part decides)
+    _bp_paint_last: Optional[tuple] = None  # last cell painted (None = off the grid)
+    blueprint_copying: bool = False  # the selection is a Ctrl+C copy (Ctrl+V places it)
+    blueprint_copy_pending: Optional[dict] = None  # copied area waiting for Ctrl+V
+    blueprint_clip: Optional[dict] = None  # copied area being placed; temporary, never saved
     _bp_force_outline: Optional[tuple] = None  # (x0, y0, x1, y1) from the ghost, drawn in draw()
     _bp_rmb_latch: bool = False  # right-click blocked until released (after a cancel)
     _bp_preview_open: bool = False  # enlarged blueprint view is showing
@@ -313,6 +340,8 @@ class Ui:
         self.blueprints = _bp_list(sim)
 
     def _bp_current(self) -> Optional[dict]:
+        if self.blueprint_clip is not None:
+            return self.blueprint_clip  # placing a Ctrl+C copy
         if not self.blueprints:
             return None
         self.blueprint_index = max(0, min(self.blueprint_index, len(self.blueprints) - 1))
@@ -390,20 +419,162 @@ class Ui:
         self.blueprint_sel_rect = None
         self.blueprint_sel_anchor = None
         self.blueprint_sel_dragging = False
+        self.blueprint_sel_removed = set()
+        self._bp_painting = False
+        self._bp_paint_include = None
+        self._bp_paint_last = None
+        self.blueprint_copying = False
+        self.blueprint_copy_pending = None
+        self.blueprint_clip = None
+
+    def start_copy_selection(self, sim: Simulation) -> None:
+        """Ctrl+C: drag over the grid to copy an area, then Ctrl+V places it with
+        the normal blueprint rules. Any other key discards it; it's never saved."""
+        self.cancel_blueprint_modes()
+        self.blueprint_selecting = True
+        self.blueprint_copying = True
+        sim.selected_component_index = -1
+
+    def _finish_copy(self, sim: Simulation) -> None:
+        """Drag released in copy mode: copy the area now and keep the selection
+        on screen until Ctrl+V (place it) or any other key (discard it)."""
+        clip = self._bp_sel_capture(sim, "Copy")
+        if clip is None:
+            self.blueprint_sel_rect = None  # stay in copy mode to try another area
+            self._bp_say("Nothing to copy there.")
+            return
+        self.blueprint_copy_pending = clip
+
+    def paste_copy(self, sim: Simulation) -> None:
+        """Ctrl+V while copying: place the copied area like a blueprint."""
+        if self.blueprint_copy_pending is None:
+            self._bp_say("Drag over the grid to copy an area first.")
+            return
+        clip = self.blueprint_copy_pending
+        self.cancel_blueprint_modes()
+        self.blueprint_clip = clip
+        self.blueprint_placing = True
+        sim.selected_component_index = -1
+
+    def _bp_sel_has(self, x: int, y: int) -> bool:
+        """Is cell (x, y) in the selection: inside the rectangle and not one of
+        the parts left out of it?"""
+        rect = self.blueprint_sel_rect
+        return rect is not None and _bp_in_rect(x, y, rect) and (x, y) not in self.blueprint_sel_removed
+
+    def _bp_sel_any(self) -> bool:
+        return self.blueprint_sel_rect is not None
+
+    def _bp_sel_size(self) -> tuple[int, int]:
+        rect = self.blueprint_sel_rect
+        if rect is None:
+            return 0, 0
+        return rect[2] - rect[0] + 1, rect[3] - rect[1] + 1
+
+    def _bp_sel_capture(self, sim: Simulation, name: str) -> Optional[dict]:
+        return _bp_capture(sim, name, include=self._bp_sel_has)
+
+    def _bp_set_part(self, sim: Simulation, x: int, y: int, include: bool) -> bool:
+        """Put the part at (x, y) into the selection (include=True) or take it
+        out. A part outside the rectangle grows the rectangle to reach it, and
+        any other parts the rectangle newly covers are left out. Empty tiles are
+        ignored. Returns True when the selection changed."""
+        grid = sim.grid
+        if grid is None or _bp_part_at(grid, x, y) is None or self._bp_sel_has(x, y) == include:
+            return False
+        cell = (x, y)
+        rect = self.blueprint_sel_rect
+        if not include:
+            self.blueprint_sel_removed.add(cell)
+        elif rect is None:
+            self.blueprint_sel_rect = (x, y, x, y)
+        elif _bp_in_rect(x, y, rect):
+            self.blueprint_sel_removed.discard(cell)
+        else:
+            grown = (min(rect[0], x), min(rect[1], y), max(rect[2], x), max(rect[3], y))
+            for gx, gy, _gz, comp in grid.iter_cells():
+                if (
+                    comp is not None
+                    and (gx, gy) != cell
+                    and _bp_in_rect(gx, gy, grown)
+                    and not _bp_in_rect(gx, gy, rect)
+                ):
+                    self.blueprint_sel_removed.add((gx, gy))
+            self.blueprint_sel_rect = grown
+        self._bp_fit_selection(sim)
+        if self.blueprint_copying:  # keep the copy waiting for Ctrl+V in step
+            self.blueprint_copy_pending = self._bp_sel_capture(sim, "Copy")
+        return True
+
+    def _bp_fit_selection(self, sim: Simulation) -> None:
+        """Make the rectangle the smallest one holding every included part, and
+        forget left-out parts that end up outside it. No included parts means
+        no selection."""
+        grid = sim.grid
+        if grid is None or self.blueprint_sel_rect is None:
+            return
+        xs, ys = [], []
+        for gx, gy, _gz, comp in grid.iter_cells():
+            if comp is not None and self._bp_sel_has(gx, gy):
+                xs.append(gx)
+                ys.append(gy)
+        if not xs:
+            self.blueprint_sel_rect = None
+            self.blueprint_sel_removed = set()
+            return
+        rect = (min(xs), min(ys), max(xs), max(ys))
+        self.blueprint_sel_rect = rect
+        self.blueprint_sel_removed = {p for p in self.blueprint_sel_removed if _bp_in_rect(p[0], p[1], rect)}
+
+    def _bp_paint_cell(self, sim: Simulation, cell: tuple) -> None:
+        """Shift+click held: apply the paint action to the part at cell. The
+        first part reached decides the action (add it if it's out, remove it
+        if it's in)."""
+        if sim.grid is None or _bp_part_at(sim.grid, cell[0], cell[1]) is None:
+            return
+        if self._bp_paint_include is None:
+            self._bp_paint_include = not self._bp_sel_has(cell[0], cell[1])
+        self._bp_set_part(sim, cell[0], cell[1], self._bp_paint_include)
+
+    def _bp_paint_to(self, sim: Simulation, cell: Optional[tuple]) -> None:
+        """Paint every cell from the last painted one to cell, so a quick drag
+        doesn't skip parts. None = cursor off the grid (the path restarts)."""
+        last = self._bp_paint_last
+        self._bp_paint_last = cell
+        if cell is None or cell == last:
+            return
+        if last is None:
+            self._bp_paint_cell(sim, cell)
+            return
+        dx, dy = cell[0] - last[0], cell[1] - last[1]
+        steps = max(abs(dx), abs(dy))
+        for i in range(1, steps + 1):
+            self._bp_paint_cell(sim, (last[0] + round(dx * i / steps), last[1] + round(dy * i / steps)))
 
     def update_blueprint_selection(
         self, sim: Simulation, mouse_x: float, mouse_y: float, mouse_down: bool, mouse_pressed: bool
     ) -> None:
-        """Click-and-drag rectangle selection on the grid (while saving)."""
+        """Click-and-drag rectangle selection on the grid (saving, or Ctrl+C copy).
+        Shift+click adds or removes the part under the cursor instead, and keeps
+        doing the same to every part it passes over until the button is released."""
         if not self.blueprint_selecting or sim.grid is None:
             return
         grid = sim.grid
         if mouse_pressed:
             cell = grid.screen_to_cell(int(mouse_x), int(mouse_y))
-            if cell is not None:  # presses on the banner/buttons are ignored
+            if cell is not None and is_key_down(KEY_SHIFT):
+                self._bp_painting = True  # no new drag
+                self._bp_paint_include = None
+                self._bp_paint_last = None
+                self._bp_paint_to(sim, cell)
+            elif cell is not None:  # presses on the banner/buttons are ignored
+                self.blueprint_copy_pending = None  # a new drag replaces the copy
+                self.blueprint_sel_removed = set()
                 self.blueprint_sel_anchor = (cell[0], cell[1])
                 self.blueprint_sel_dragging = True
                 self.blueprint_sel_rect = (cell[0], cell[1], cell[0], cell[1])
+        elif self._bp_painting and mouse_down:
+            self._bp_paint_to(sim, grid.screen_to_cell(int(mouse_x), int(mouse_y)))
         elif self.blueprint_sel_dragging and mouse_down:
             cell = grid.screen_to_cell_unbounded(int(mouse_x), int(mouse_y))
             if cell is not None and self.blueprint_sel_anchor is not None:
@@ -416,40 +587,86 @@ class Ui:
                     cy = max(0, min(cy, gh - 1))
                 ax, ay = self.blueprint_sel_anchor
                 self.blueprint_sel_rect = (min(ax, cx), min(ay, cy), max(ax, cx), max(ay, cy))
+        if self._bp_painting and not mouse_down:
+            self._bp_painting = False
+            self._bp_paint_include = None
+            self._bp_paint_last = None
         if self.blueprint_sel_dragging and not mouse_down:
             self.blueprint_sel_dragging = False
+            self._bp_fit_selection(sim)  # snap to the parts inside
+            if self.blueprint_copying:
+                self._finish_copy(sim)
+            elif self.blueprint_sel_rect is None:
+                self._bp_say("Nothing to select there.")
 
-    def draw_blueprint_selection(self, sim: Simulation) -> None:
-        """Blue translucent selection rectangle (caller clips to the grid viewport)."""
-        if not self.blueprint_selecting or self.blueprint_sel_rect is None or sim.grid is None:
+    def draw_blueprint_selection(
+        self, sim: Simulation, mouse_x: Optional[float] = None, mouse_y: Optional[float] = None
+    ) -> None:
+        """Translucent selection rectangle: blue when saving, violet for a Ctrl+C
+        copy, with parts left out of it dimmed. When not dragging, the tile under
+        the cursor gets the selection outline to show where a selection would
+        start. Caller clips to the grid viewport."""
+        if not self.blueprint_selecting or sim.grid is None:
             return
         grid = sim.grid
-        x0, y0, x1, y1 = self.blueprint_sel_rect
-        try:
-            px, py = grid.cell_to_screen(x0, y0)
-            ex, ey = grid.cell_to_screen(x1 + 1, y1 + 1)
-        except Exception:
-            return
-        w, h = ex - px, ey - py
-        draw_rectangle(int(px), int(py), int(w), int(h), Color(70, 140, 255, 80))
-        draw_rectangle_lines(int(px), int(py), int(w), int(h), Color(120, 190, 255, 255))
-        if w > 4 and h > 4:
-            draw_rectangle_lines(int(px) + 1, int(py) + 1, int(w) - 2, int(h) - 2, Color(120, 190, 255, 255))
+        if self.blueprint_copying:
+            fill, line = Color(*_BP_COPY_FILL), Color(*_BP_COPY_LINE, 255)
+        else:
+            fill, line = Color(70, 140, 255, 80), Color(120, 190, 255, 255)
 
-    def _bp_count_in_rect(self, sim: Simulation, rect) -> int:
-        if sim.grid is None or rect is None:
-            return 0
-        return sum(1 for gx, gy, _gz, c in sim.grid.iter_cells() if c is not None and _bp_in_rect(gx, gy, rect))
+        remove_col = Color(*_BP_REMOVE_HOVER, 255)
 
-    def _bp_cost_in_rect(self, sim: Simulation, rect) -> float:
-        """Current buy price of every component inside the selection."""
-        if sim.grid is None or rect is None:
-            return 0.0
-        return sum(
-            sim.get_component_cost(c.stats)
-            for gx, gy, _gz, c in sim.grid.iter_cells()
-            if c is not None and _bp_in_rect(gx, gy, rect)
-        )
+        def outline(x: int, y: int, w: int, h: int, col=line) -> None:
+            draw_rectangle_lines(x, y, w, h, col)
+            if w > 4 and h > 4:
+                draw_rectangle_lines(x + 1, y + 1, w - 2, h - 2, col)
+
+        rect = self.blueprint_sel_rect
+        if rect is not None:
+            x0, y0, x1, y1 = rect
+            try:
+                px, py = grid.cell_to_screen(x0, y0)
+                ex, ey = grid.cell_to_screen(x1 + 1, y1 + 1)
+            except Exception:
+                return
+            px, py, w, h = int(px), int(py), int(ex - px), int(ey - py)
+            draw_rectangle(px, py, w, h, fill)
+            # Parts left out of the selection are dimmed
+            shade = Color(*_BP_EXCLUDED_SHADE)
+            for x, y in self.blueprint_sel_removed:
+                if not _bp_in_rect(x, y, rect) or _bp_part_at(grid, x, y) is None:
+                    continue
+                draw_rectangle(*_bp_cell_rect(grid, x, y), shade)
+            outline(px, py, w, h)
+
+        # Not dragging: outline the tile under the cursor. Normally that's where
+        # a new selection would start; with Shift held (or a Shift+click held)
+        # it shows what happens to the part there (selection colour = added,
+        # red = removed).
+        if not self.blueprint_sel_dragging and mouse_x is not None and mouse_y is not None:
+            cell = grid.screen_to_cell(int(mouse_x), int(mouse_y))
+            if cell is not None:
+                if not (self._bp_painting or is_key_down(KEY_SHIFT)):
+                    outline(*_bp_cell_rect(grid, cell[0], cell[1]))
+                elif _bp_part_at(grid, cell[0], cell[1]) is not None:
+                    if self._bp_painting and self._bp_paint_include is not None:
+                        removes = not self._bp_paint_include
+                    else:
+                        removes = self._bp_sel_has(cell[0], cell[1])
+                    outline(*_bp_cell_rect(grid, cell[0], cell[1]), col=remove_col if removes else line)
+
+    def _bp_sel_parts(self, sim: Simulation) -> list:
+        """Components in the selection."""
+        if sim.grid is None or not self._bp_sel_any():
+            return []
+        return [c for gx, gy, _gz, c in sim.grid.iter_cells() if c is not None and self._bp_sel_has(gx, gy)]
+
+    def _bp_count_sel(self, sim: Simulation) -> int:
+        return len(self._bp_sel_parts(sim))
+
+    def _bp_cost_sel(self, sim: Simulation) -> float:
+        """Current buy price of every component in the selection."""
+        return sum(sim.get_component_cost(c.stats) for c in self._bp_sel_parts(sim))
 
     def draw_blueprint_ghost(self, sim: Simulation, mouse_x: float, mouse_y: float) -> None:
         """Translucent preview of the selected blueprint under the cursor.
@@ -715,7 +932,8 @@ class Ui:
         self._bp_sync(sim)
         n = len(self.blueprints)
         cur = self._bp_current()
-        if n == 0:
+        copy_mode = self.blueprint_copying or self.blueprint_clip is not None
+        if n == 0 and self.blueprint_clip is None:
             self.blueprint_placing = False
 
         margin = 20
@@ -755,8 +973,8 @@ class Ui:
         cost_txt = ""
         cost_color = text_color
         if self.blueprint_selecting:
-            if self.blueprint_sel_rect is not None:
-                total_cost = self._bp_cost_in_rect(sim, self.blueprint_sel_rect)
+            if self._bp_sel_any():
+                total_cost = self._bp_cost_sel(sim)
                 cost_txt = f"Total cost: {format_number_with_suffix(total_cost)}"
                 if sim.store.money < total_cost:
                     cost_color = Color(255, 170, 90, 255)
@@ -768,9 +986,9 @@ class Ui:
         cost_y = panel_y + 56
         cost_has_room = cost_y + 10 <= by - 1
 
-        title = "Blueprints"
+        title = "Copy" if copy_mode else "Blueprints"
         if cost_txt and not cost_has_room:
-            title = f"Blueprints - {cost_txt}"
+            title = f"{title} - {cost_txt}"
         tw = _measure(title, 16)
         draw_text(title, region_x + max(0, (region_w - tw) // 2), panel_y + 20, 16, text_color)
 
@@ -778,19 +996,38 @@ class Ui:
         if self.blueprint_status and get_time() < self.blueprint_status_until:
             info = self.blueprint_status
             info_color = Color(245, 200, 70, 255)
-        elif self.blueprint_selecting:
-            rect = self.blueprint_sel_rect
-            if rect is None:
-                info = "Drag over the grid to select an area (Esc cancels)"
-                info_color = Color(120, 190, 255, 255)
+        elif self.blueprint_copying:
+            info_color = Color(*_BP_COPY_LINE, 255)
+            if not self._bp_sel_any():
+                info = "Drag to copy an area or Shift+click parts (Esc cancels)"
             else:
-                cnt = self._bp_count_in_rect(sim, rect)
-                info = f"Selected {rect[2] - rect[0] + 1}x{rect[3] - rect[1] + 1}, {cnt} parts. Confirm to save"
-                info_color = Color(120, 190, 255, 255)
+                sw, sh = self._bp_sel_size()
+                size = f"{sw}x{sh}, {self._bp_count_sel(sim)} parts"
+                if self.blueprint_copy_pending is not None and not self.blueprint_sel_dragging:
+                    if is_key_down(KEY_SHIFT) or self._bp_painting:
+                        info = f"Copied {size}. Shift+click adds/removes parts"
+                    else:
+                        info = f"Copied {size}. Ctrl+V to place (other keys cancel)"
+                else:
+                    info = f"Copying {size}"
+        elif self.blueprint_selecting:
+            info_color = Color(120, 190, 255, 255)
+            if not self._bp_sel_any():
+                info = "Drag to select an area or Shift+click parts (Esc cancels)"
+            else:
+                sw, sh = self._bp_sel_size()
+                size = f"{sw}x{sh}, {self._bp_count_sel(sim)} parts"
+                if (is_key_down(KEY_SHIFT) or self._bp_painting) and not self.blueprint_sel_dragging:
+                    info = f"Selected {size}. Shift+click adds/removes parts"
+                else:
+                    info = f"Selected {size}. Confirm to save"
         elif self.blueprint_placing:
             if is_key_down(KEY_SHIFT):
                 info = "Shift: force place (sells differing parts)"
                 info_color = Color(120, 190, 255, 255)
+            elif self.blueprint_clip is not None:
+                info = "Click to place the copy (Shift forces, Esc cancels)"
+                info_color = Color(120, 255, 140, 255)
             else:
                 info = "Click to place (Shift forces, Esc cancels)"
                 info_color = Color(120, 255, 140, 255)
@@ -811,15 +1048,24 @@ class Ui:
 
         # Button row
         confirming = self.blueprint_confirm_delete and n > 0
-        labels = [
-            ("prev", "<", n > 1),
-            ("next", ">", n > 1),
-            ("save", "Confirm" if (self.blueprint_selecting and self.blueprint_sel_rect is not None) else ("Cancel" if self.blueprint_selecting else "Save"), True),
-            ("place", "Cancel" if self.blueprint_placing else "Place", n > 0),
-            ("delete", "Sure?" if confirming else "Delete", n > 0),
-        ]
-        if self.blueprint_selecting and self.blueprint_sel_rect is not None:
-            labels.insert(3, ("cancel_sel", "Cancel", True))
+        if copy_mode:
+            # Copying or pasting: "Cancel" discards the copy, "Place" does the same
+            # as Ctrl+V. Saved designs aren't in play, so their arrows / Delete are
+            # hidden.
+            labels = [
+                ("copy_cancel", "Cancel", True),
+                ("copy_place", "Place", True),
+            ]
+        else:
+            labels = [
+                ("prev", "<", n > 1),
+                ("next", ">", n > 1),
+                ("save", "Confirm" if (self.blueprint_selecting and self._bp_sel_any()) else ("Cancel" if self.blueprint_selecting else "Save"), True),
+                ("place", "Cancel" if self.blueprint_placing else "Place", n > 0),
+                ("delete", "Sure?" if confirming else "Delete", n > 0),
+            ]
+            if self.blueprint_selecting and self._bp_sel_any():
+                labels.insert(3, ("cancel_sel", "Cancel", True))
         gap = 6
         widths = [max(18, _measure(lbl, 10) + 14) for _, lbl, _ in labels]
         total = sum(widths) + gap * (len(labels) - 1)
@@ -833,6 +1079,8 @@ class Ui:
                 bg, fg = Color(30, 30, 36, 220), Color(100, 100, 110, 255)
             elif key == "delete" and confirming:
                 bg, fg = Color(150, 50, 40, 240), text_color
+            elif key == "copy_place" or (key == "place" and copy_mode):
+                bg, fg = Color(90, 60, 140, 240), text_color
             elif key == "place" and self.blueprint_placing:
                 bg, fg = Color(40, 110, 60, 240), text_color
             elif key == "save" and self.blueprint_selecting:
@@ -857,20 +1105,32 @@ class Ui:
             self.blueprint_index = (self.blueprint_index - 1) % n
         elif action == "next":
             self.blueprint_index = (self.blueprint_index + 1) % n
+        elif action == "copy_cancel":
+            self.cancel_blueprint_modes()  # discard the copy
+        elif action == "copy_place":
+            if self.blueprint_copying:
+                self.paste_copy(sim)  # same as Ctrl+V (already pasting: nothing to do)
+        elif action == "save" and copy_mode:
+            # Leave the copy and start a normal save selection instead
+            self.cancel_blueprint_modes()
+            self.blueprint_selecting = True
+            sim.selected_component_index = -1
+        elif action == "place" and copy_mode:
+            self.cancel_blueprint_modes()  # "Cancel": stop copying / placing the copy
         elif action == "save":
             if not self.blueprint_selecting:
                 # Start drag-selecting an area of the reactor to save
                 self.cancel_blueprint_modes()
                 self.blueprint_selecting = True
                 sim.selected_component_index = -1
-            elif self.blueprint_sel_rect is None:
+            elif not self._bp_sel_any():
                 self.cancel_blueprint_modes()  # "Cancel" before anything was selected
             else:
                 used = {b.get("name") for b in self.blueprints}
                 k = n + 1
                 while f"Design {k}" in used:
                     k += 1
-                captured = _bp_capture(sim, f"Design {k}", self.blueprint_sel_rect)
+                captured = self._bp_sel_capture(sim, f"Design {k}")
                 if captured is None:
                     self._bp_say("No components in the selected area.")
                 else:
@@ -1061,7 +1321,7 @@ class Ui:
         if sim.view_mode == "reactor" and self.blueprint_selecting and sim.grid is not None:
             g = sim.grid
             begin_scissor_mode(g.origin_x, g.origin_y, g.viewport_w, g.viewport_h)
-            self.draw_blueprint_selection(sim)
+            self.draw_blueprint_selection(sim, mouse_x, mouse_y)
             end_scissor_mode()
         # Blueprint "can't place" outline: drawn exactly like the selection box
         # (over the grid frame, clipped to the grid viewport)
